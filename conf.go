@@ -3,14 +3,16 @@ package repomap
 import (
 	_ "embed"
 	"fmt"
-	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
+	"github.com/flanksource/clicky"
+	"github.com/flanksource/clicky/exec"
+	"github.com/flanksource/commons/logger"
 	"github.com/flanksource/repomap/kubernetes"
 	"github.com/ghodss/yaml"
+	"github.com/samber/lo"
+	"github.com/samber/oops"
 )
 
 //go:embed defaults.yaml
@@ -42,13 +44,13 @@ func (conf *ArchConf) GetFileMap(path string, commit string) (*FileMap, error) {
 
 		content, err := conf.ReadFile(path, commit)
 		if err != nil {
-			slog.Error("Error reading file", "path", path, "commit", commit, "error", err)
+			logger.Errorf("Error reading file path=%s commit=%s: %v", path, commit, err)
 			return &f, nil
 		}
 
 		f.KubernetesRefs, err = kubernetes.ExtractKubernetesRefsFromContent(content)
 		if err != nil {
-			slog.Error("Error extracting k8s refs", "path", path, "commit", commit, "error", err)
+			logger.Errorf("Error extracting k8s refs path=%s commit=%s: %v", path, commit, err)
 		}
 	}
 
@@ -89,12 +91,12 @@ func FindGitRoot(path string) string {
 func GetFileMap(path string, commit string) (*FileMap, error) {
 	userConf, err := GetConfForFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get arch.yaml for %s: %w", path, err)
+		return nil, oops.Wrapf(err, "failed to get arch.yaml for %s", path)
 	}
 
 	defaultConf, err := LoadDefaultArchConf()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load embedded defaults: %w", err)
+		return nil, oops.Wrapf(err, "failed to load embedded defaults")
 	}
 
 	conf := defaultConf.Merge(userConf)
@@ -111,12 +113,12 @@ func GetFileMap(path string, commit string) (*FileMap, error) {
 func GetConf(path string) (*ArchConf, error) {
 	userConf, err := GetConfForFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get arch.yaml for %s: %w", path, err)
+		return nil, oops.Wrapf(err, "failed to get arch.yaml for %s", path)
 	}
 
 	defaultConf, err := LoadDefaultArchConf()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load embedded defaults: %w", err)
+		return nil, oops.Wrapf(err, "failed to load embedded defaults")
 	}
 
 	conf := defaultConf.Merge(userConf)
@@ -155,7 +157,7 @@ func GetConfForFile(path string) (*ArchConf, error) {
 func LoadArchConf(path string) (*ArchConf, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load arch.yaml from %s: %w", path, err)
+		return nil, oops.Wrapf(err, "failed to load arch.yaml from %s", path)
 	}
 
 	var conf ArchConf
@@ -177,7 +179,7 @@ func LoadArchConf(path string) (*ArchConf, error) {
 func LoadDefaultArchConf() (*ArchConf, error) {
 	var conf ArchConf
 	if err := yaml.Unmarshal([]byte(defaultArchYAML), &conf); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal embedded defaults.yaml: %w", err)
+		return nil, oops.Wrapf(err, "failed to unmarshal embedded defaults.yaml")
 	}
 	return &conf, nil
 }
@@ -200,11 +202,7 @@ func (defaultConf ArchConf) Merge(userConf *ArchConf) ArchConf {
 		},
 	}
 
-	if userConf.repoPath != "" {
-		merged.repoPath = userConf.repoPath
-	} else {
-		merged.repoPath = defaultConf.repoPath
-	}
+	merged.repoPath = lo.CoalesceOrEmpty(userConf.repoPath, defaultConf.repoPath)
 
 	for scope, rules := range userConf.Scopes.Rules {
 		merged.Scopes.Rules[scope] = rules
@@ -235,21 +233,16 @@ func (conf *ArchConf) RepoPath() string {
 	return conf.repoPath
 }
 
-func (conf *ArchConf) gitExec(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = conf.repoPath
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
+func (conf *ArchConf) Exec() exec.WrapperFunc {
+	return clicky.Exec("git").WithCwd(conf.repoPath).AsWrapper()
 }
 
 func (conf *ArchConf) FileExistsAtCommit(path string, commit string) bool {
 	if conf.repoPath == "" || commit == "" {
 		return false
 	}
-	_, err := conf.gitExec("cat-file", "-e", fmt.Sprintf("%s:%s", commit, path))
+	git := conf.Exec()
+	_, err := git("cat-file", "-e", fmt.Sprintf("%s:%s", commit, path))
 	return err == nil
 }
 
@@ -260,5 +253,10 @@ func (conf *ArchConf) ReadFile(path string, commit string) (string, error) {
 	if commit == "" {
 		return "", fmt.Errorf("must specify a commit to read at")
 	}
-	return conf.gitExec("show", fmt.Sprintf("%s:%s", commit, path))
+	git := conf.Exec()
+	result, err := git("show", fmt.Sprintf("%s:%s", commit, path))
+	if err != nil {
+		return "", oops.Wrapf(err, "failed to read %s at commit %s", path, commit)
+	}
+	return result.Stdout, nil
 }

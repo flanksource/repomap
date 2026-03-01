@@ -8,15 +8,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/commons/collections"
 	"github.com/flanksource/repomap/kubernetes"
+	"github.com/samber/lo"
 )
 
 type FileMap struct {
 	Path           string
-	Scopes         Scopes                    `yaml:"scope,omitempty"`
-	Language       string                    `yaml:"language,omitempty"`
-	Tech           Technology                `yaml:"tech,omitempty"`
-	Ignored        bool                      `yaml:"ignored,omitempty"`
+	Scopes         Scopes                     `yaml:"scope,omitempty"`
+	Language       string                     `yaml:"language,omitempty"`
+	Tech           Technology                 `yaml:"tech,omitempty"`
+	Violations     []Violation                `yaml:"violations,omitempty"`
+	Ignored        bool                       `yaml:"ignored,omitempty"`
+	Commits        CommitAnalyses             `yaml:"commits,omitempty"`
 	KubernetesRefs []kubernetes.KubernetesRef `yaml:"kubernetes_refs,omitempty" json:"kubernetes_refs,omitempty"`
 }
 
@@ -25,6 +29,26 @@ type Author struct {
 	Email    string    `json:"email,omitempty"`
 	Date     time.Time `json:"date,omitempty"`
 	GithubID string    `json:"github_id,omitempty"`
+}
+
+func (a Author) Matches(filter string) bool {
+	if filter == "" {
+		return true
+	}
+
+	if !strings.ContainsAny(filter, "!*,") {
+		return strings.Contains(a.Name, filter) || strings.Contains(a.Email, filter)
+	}
+
+	matched, negated := collections.MatchItem(a.Name, filter)
+	if matched {
+		return true
+	}
+	if negated {
+		return false
+	}
+	matched, _ = collections.MatchItem(a.Email, filter)
+	return matched
 }
 
 type SourceChangeType string
@@ -128,6 +152,8 @@ type Commit struct {
 	QualityScore int      `json:"score,omitempty"`
 }
 
+type Commits []Commit
+
 func (c Commit) AsMap() map[string]any {
 	return map[string]any{
 		"hash":         c.Hash,
@@ -221,16 +247,13 @@ func (c Changes) Summary() CommitChange {
 		}
 	}
 
-	for scope := range scopes {
-		summary.Scope = append(summary.Scope, scope)
-	}
+	summary.Scope = lo.Keys(scopes)
+
 	if len(types) == 1 {
-		for t := range types {
-			summary.Type = t
-		}
+		summary.Type = lo.Keys(types)[0]
 	}
-	for t := range techs {
-		summary.Tech = append(summary.Tech, t)
+	if len(techs) > 0 {
+		summary.Tech = lo.Keys(techs)
 	}
 
 	return summary
@@ -254,11 +277,7 @@ func (ca CommitAnalysis) GetScopes() Scopes {
 			scopesSet[scope] = struct{}{}
 		}
 	}
-	var scopes Scopes
-	for s := range scopesSet {
-		scopes = append(scopes, s)
-	}
-	return scopes
+	return lo.Keys(scopesSet)
 }
 
 func (ca CommitAnalysis) IsAnalyzed() bool {
@@ -306,6 +325,42 @@ func (ca CommitAnalyses) To() time.Time {
 		}
 	}
 	return latest
+}
+
+type AIAnalysisOutput struct {
+	Type    CommitType `yaml:"type,omitempty" json:"type,omitempty"`
+	Scope   ScopeType  `yaml:"scope,omitempty" json:"scope,omitempty"`
+	Subject string     `yaml:"subject,omitempty" json:"subject,omitempty"`
+	Body    string     `yaml:"body,omitempty" json:"body,omitempty"`
+}
+
+func (a AIAnalysisOutput) String() string {
+	s := string(a.Type)
+	if a.Scope != "" {
+		s += fmt.Sprintf("(%s)", a.Scope)
+	}
+	s += ": " + a.Subject
+	if a.Body != "" {
+		s += "\n" + a.Body
+	}
+	return s
+}
+
+type ViolationSeverity string
+
+const (
+	SeverityInfo    ViolationSeverity = "info"
+	SeverityWarning ViolationSeverity = "warning"
+	SeverityError   ViolationSeverity = "error"
+)
+
+type Violation struct {
+	File     string            `json:"file,omitempty"`
+	Line     int               `json:"line,omitempty"`
+	Column   int               `json:"column,omitempty"`
+	Message  *string           `json:"message,omitempty"`
+	Source   string            `json:"source,omitempty"`
+	Severity ViolationSeverity `yaml:"severity,omitempty"`
 }
 
 type ScanResult struct {
