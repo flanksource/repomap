@@ -2,64 +2,114 @@ package repomap
 
 import (
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api"
+	"github.com/flanksource/clicky/api/icons"
+	"github.com/flanksource/repomap/kubernetes"
 )
 
 func (f FileMap) Pretty() api.Text {
 	t := clicky.Text(f.Path)
 	if len(f.Scopes) > 0 {
-		t = t.Append(" scopes: ", "text-muted").Append(f.Scopes)
+		t = t.Space()
+		for _, scope := range f.Scopes {
+			t = t.Add(scope.Pretty()).Space()
+		}
 	}
 	if f.Ignored {
 		t = t.Append(" [IGNORED]", "text-yellow-600")
 	}
+	return t
+}
 
-	if len(f.KubernetesRefs) > 0 {
-		t = t.NewLine().NewLine()
-		t = t.Append("Kubernetes Resources", "font-bold text-blue-600").NewLine()
+func (FileMap) Columns() []api.ColumnDef {
+	return []api.ColumnDef{
+		api.Column("path").Label("Path").Build(),
+		api.Column("language").Label("Language").Build(),
+		api.Column("scopes").Label("Scopes").Build(),
+		api.Column("k8s").Label("Kubernetes").Build(),
+	}
+}
 
-		for _, ref := range f.KubernetesRefs {
-			t = t.Append("  ")
-			if ref.APIVersion != "" && ref.Kind != "" {
-				t = t.Append(ref.APIVersion+" "+ref.Kind, "font-medium text-cyan-600").NewLine()
-			} else if ref.Kind != "" {
-				t = t.Append(ref.Kind, "font-medium text-cyan-600").NewLine()
-			}
-
-			if ref.Name != "" {
-				t = t.Append("    Name: ", "text-muted").Append(ref.Name).NewLine()
-			}
-
-			if ref.Namespace != "" {
-				t = t.Append("    Namespace: ", "text-muted").Append(ref.Namespace).NewLine()
-			}
-
-			if ref.StartLine > 0 && ref.EndLine > 0 {
-				t = t.Append("    Lines: ", "text-muted").Append(fmt.Sprintf("%d-%d", ref.StartLine, ref.EndLine)).NewLine()
-			}
-
-			if len(ref.Labels) > 0 {
-				t = t.Append("    Labels:").NewLine()
-				for k, v := range ref.Labels {
-					t = t.Append("      "+k+": ", "text-muted").Append(v).NewLine()
-				}
-			}
-
-			if len(ref.Annotations) > 0 {
-				t = t.Append("    Annotations:").NewLine()
-				for k, v := range ref.Annotations {
-					t = t.Append("      "+k+": ", "text-muted").Append(v).NewLine()
-				}
-			}
-
-			t = t.NewLine()
+func (f FileMap) Row() map[string]any {
+	var scopes Scopes
+	for _, s := range f.Scopes {
+		if string(s) != f.Language {
+			scopes = append(scopes, s)
 		}
 	}
+	row := map[string]any{
+		"path":     clicky.Text("").Add(getFileIcon(f.Path)).Space().Append(f.Path, "font-mono"),
+		"language": f.Language,
+		"scopes":   scopes.Pretty(),
+	}
+	if len(f.KubernetesRefs) > 0 {
+		t := clicky.Text("")
+		for i, ref := range f.KubernetesRefs {
+			if i > 0 {
+				t = t.Append(", ")
+			}
+			t = t.Add(ref.Pretty())
+		}
+		row["k8s"] = t
+	}
+	return row
+}
 
+func (f FileMap) PrettyShort() api.Text {
+	t := clicky.Text("").Add(getFileIcon(f.Path)).Space().Append(filepath.Base(f.Path), "font-mono")
+	for _, scope := range f.Scopes {
+		if string(scope) != f.Language {
+			t = t.Space().Add(scope.Pretty())
+		}
+	}
+	if f.Ignored {
+		t = t.Append(" [IGNORED]", "text-yellow-600")
+	}
 	return t
+}
+
+func (f FileMap) GetChildren() []api.TreeNode {
+	var children []api.TreeNode
+	for _, ref := range f.KubernetesRefs {
+		children = append(children, k8sRefNode{ref})
+	}
+	return children
+}
+
+type k8sRefNode struct {
+	kubernetes.KubernetesRef
+}
+
+func (n k8sRefNode) Pretty() api.Text      { return n.KubernetesRef.Pretty() }
+func (n k8sRefNode) GetChildren() []api.TreeNode { return nil }
+
+func getFileIcon(path string) icons.Icon {
+	switch filepath.Ext(path) {
+	case ".go":
+		return icons.Golang
+	case ".js", ".jsx":
+		return icons.JS
+	case ".ts", ".tsx":
+		return icons.TS
+	case ".py":
+		return icons.Python
+	case ".java":
+		return icons.Java
+	case ".md":
+		return icons.MD
+	case ".yaml", ".yml":
+		return icons.Config
+	case ".json":
+		return icons.File
+	case ".sql":
+		return icons.DB
+	default:
+		return icons.File
+	}
 }
 
 func (author Author) Pretty() api.Text {

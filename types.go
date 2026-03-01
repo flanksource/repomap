@@ -24,7 +24,15 @@ type FileMap struct {
 }
 
 func (f FileMap) IsEmpty() bool {
-	return len(f.Scopes) == 0 && len(f.Violations) == 0 && len(f.KubernetesRefs) == 0
+	if len(f.Violations) > 0 || len(f.KubernetesRefs) > 0 {
+		return false
+	}
+	for _, s := range f.Scopes {
+		if string(s) != f.Language && s != ScopeTypeTest {
+			return false
+		}
+	}
+	return true
 }
 
 type Author struct {

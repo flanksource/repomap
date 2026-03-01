@@ -17,6 +17,17 @@ func (s Scopes) Contains(scope ScopeType) bool {
 	return false
 }
 
+func (s Scopes) Pretty() api.Text {
+	t := clicky.Text("")
+	for i, scope := range s {
+		if i > 0 {
+			t = t.Space()
+		}
+		t = t.Add(scope.Pretty())
+	}
+	return t
+}
+
 func (s Scopes) ToString() []string {
 	var result []string
 	for _, scope := range s {
