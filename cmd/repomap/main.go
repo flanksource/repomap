@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 
 	"github.com/flanksource/clicky"
@@ -27,24 +26,6 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-func getWorkingDir() (string, error) {
-	if workingDir != "" {
-		absPath, err := filepath.Abs(workingDir)
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve working directory: %w", err)
-		}
-		info, err := os.Stat(absPath)
-		if err != nil {
-			return "", fmt.Errorf("working directory does not exist: %w", err)
-		}
-		if !info.IsDir() {
-			return "", fmt.Errorf("working directory is not a directory: %s", absPath)
-		}
-		return absPath, nil
-	}
-	return os.Getwd()
-}
-
 func init() {
 	clicky.BindAllFlags(rootCmd.PersistentFlags(), "format")
 	logger.Configure(logger.Flags{LogToStderr: true, Color: true})
@@ -62,6 +43,14 @@ func init() {
 
 func main() {
 	defer shutdown.RecoverAndShutdown()
+
+	// Default to scan when no subcommand is given
+	if args := os.Args[1:]; len(args) == 0 || args[0] == "" || args[0][0] == '-' {
+		rootCmd.SetArgs(append([]string{"scan"}, args...))
+	} else if cmd, _, _ := rootCmd.Find(args); cmd == rootCmd {
+		rootCmd.SetArgs(append([]string{"scan"}, args...))
+	}
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

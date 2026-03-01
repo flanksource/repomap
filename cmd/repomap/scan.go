@@ -8,13 +8,15 @@ import (
 
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api"
+
 	"github.com/flanksource/repomap"
 )
 
 type ScanOptions struct {
-	Path   string `json:"path" flag:"path" help:"Path to scan" default:"."`
+	Path   string `json:"path" args:"true" help:"Path to scan"`
 	Commit string `json:"commit" flag:"commit" help:"Git commit to scan at" default:"HEAD"`
 	All    bool   `json:"all" flag:"all" help:"Show all files including those with no scopes"`
+	Flat   bool   `json:"flat" flag:"flat" help:"Output flat list instead of tree"`
 }
 
 func (opts ScanOptions) GetName() string { return "scan" }
@@ -37,6 +39,9 @@ func init() {
 }
 
 func runScan(opts ScanOptions) (any, error) {
+	if opts.Path == "" {
+		opts.Path = "."
+	}
 	path, err := resolvePath(opts.Path)
 	if err != nil {
 		return nil, err
@@ -45,6 +50,12 @@ func runScan(opts ScanOptions) (any, error) {
 	conf, err := repomap.GetConf(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Determine prefix filter when scanning a subdirectory
+	var prefix string
+	if rel, err := filepath.Rel(conf.RepoPath(), path); err == nil && rel != "." {
+		prefix = rel + string(filepath.Separator)
 	}
 
 	files, err := gitListFiles(conf.RepoPath())
@@ -58,6 +69,9 @@ func runScan(opts ScanOptions) (any, error) {
 		if filepath.IsAbs(f) {
 			relPath, _ = filepath.Rel(conf.RepoPath(), f)
 		}
+		if prefix != "" && !strings.HasPrefix(relPath, prefix) {
+			continue
+		}
 
 		fm, err := conf.GetFileMap(relPath, opts.Commit)
 		if err != nil {
@@ -69,7 +83,11 @@ func runScan(opts ScanOptions) (any, error) {
 		results = append(results, *fm)
 	}
 
-	return results, nil
+	if opts.Flat {
+		return api.NewTableFrom(results), nil
+	}
+	tree := repomap.NewFileTree(results)
+	return api.NewTree(tree), nil
 }
 
 func resolvePath(path string) (string, error) {
