@@ -190,8 +190,8 @@ func buildFileContext(change *repomap.CommitChange) map[string]any {
 		strings.HasPrefix(baseName, ".env.")
 
 	tech := ""
-	if len(change.Tech) > 0 {
-		tech = string(change.Tech[0])
+	if len(change.Scope) > 0 {
+		tech = string(change.Scope[0])
 	} else {
 		tech = detectTech(ext)
 	}

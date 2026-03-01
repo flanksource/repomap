@@ -19,13 +19,12 @@ import (
 var defaultArchYAML string
 
 type ArchConf struct {
-	Git      GitConfig        `json:"git,omitempty" yaml:"git,omitempty"`
-	Build    BuildConfig      `json:"build,omitempty" yaml:"build,omitempty"`
-	Golang   GolangConfig     `json:"golang,omitempty" yaml:"golang,omitempty"`
-	Scopes   ScopesConfig     `json:"scopes,omitempty" yaml:"scopes,omitempty"`
-	Tech     TechnologyConfig `json:"tech,omitempty" yaml:"tech,omitempty"`
-	Severity SeverityConfig   `json:"severity,omitempty" yaml:"severity,omitempty"`
-	repoPath string           `json:"-" yaml:"-"`
+	Git      GitConfig      `json:"git,omitempty" yaml:"git,omitempty"`
+	Build    BuildConfig    `json:"build,omitempty" yaml:"build,omitempty"`
+	Golang   GolangConfig   `json:"golang,omitempty" yaml:"golang,omitempty"`
+	Scopes   ScopesConfig   `json:"scopes,omitempty" yaml:"scopes,omitempty"`
+	Severity SeverityConfig `json:"severity,omitempty" yaml:"severity,omitempty"`
+	repoPath string         `json:"-" yaml:"-"`
 }
 
 func (conf *ArchConf) GetFileMap(path string, commit string) (*FileMap, error) {
@@ -35,7 +34,6 @@ func (conf *ArchConf) GetFileMap(path string, commit string) (*FileMap, error) {
 	}
 
 	f.Scopes = conf.Scopes.GetScopesByPath(path)
-	f.Tech = conf.Tech.GetTechByPath(path)
 
 	if kubernetes.IsYaml(path) {
 		if !conf.FileExistsAtCommit(path, commit) {
@@ -197,9 +195,6 @@ func (defaultConf ArchConf) Merge(userConf *ArchConf) ArchConf {
 			AllowedScopes: userConf.Scopes.AllowedScopes,
 			Rules:         make(PathRules),
 		},
-		Tech: TechnologyConfig{
-			Rules: make(PathRules),
-		},
 	}
 
 	merged.repoPath = lo.CoalesceOrEmpty(userConf.repoPath, defaultConf.repoPath)
@@ -212,17 +207,6 @@ func (defaultConf ArchConf) Merge(userConf *ArchConf) ArchConf {
 			merged.Scopes.Rules[scope] = rules
 		} else {
 			merged.Scopes.Rules[scope] = append(merged.Scopes.Rules[scope], rules...)
-		}
-	}
-
-	for tech, rules := range userConf.Tech.Rules {
-		merged.Tech.Rules[tech] = rules
-	}
-	for tech, rules := range defaultConf.Tech.Rules {
-		if _, exists := merged.Tech.Rules[tech]; !exists {
-			merged.Tech.Rules[tech] = rules
-		} else {
-			merged.Tech.Rules[tech] = append(merged.Tech.Rules[tech], rules...)
 		}
 	}
 

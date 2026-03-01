@@ -13,9 +13,6 @@ func (f FileMap) Pretty() api.Text {
 	if len(f.Scopes) > 0 {
 		t = t.Append(" scopes: ", "text-muted").Append(f.Scopes)
 	}
-	if len(f.Tech) > 0 {
-		t = t.Append(" tech: ", "text-muted").Append(f.Tech)
-	}
 	if f.Ignored {
 		t = t.Append(" [IGNORED]", "text-yellow-600")
 	}
@@ -199,16 +196,6 @@ func (c CommitChange) Pretty() api.Text {
 	if len(c.Scope) > 0 {
 		t = t.Append(" scope=", "text-muted").Append(c.Scope)
 	}
-	if len(c.Tech) > 0 {
-		t = t.Append(" tech=", "text-muted")
-		for i, v := range c.Tech {
-			if i > 0 {
-				t = t.Append(",", "text-muted")
-			}
-			t = t.Append(string(v))
-		}
-	}
-
 	return t
 }
 

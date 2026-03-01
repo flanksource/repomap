@@ -11,15 +11,11 @@ func TestLoadDefaultArchConf(t *testing.T) {
 	if len(conf.Scopes.Rules) == 0 {
 		t.Error("expected default scope rules to be loaded")
 	}
-	if len(conf.Tech.Rules) == 0 {
-		t.Error("expected default tech rules to be loaded")
-	}
-
 	if _, ok := conf.Scopes.Rules["ci"]; !ok {
 		t.Error("expected 'ci' scope in defaults")
 	}
-	if _, ok := conf.Tech.Rules["kubernetes"]; !ok {
-		t.Error("expected 'kubernetes' tech in defaults")
+	if _, ok := conf.Scopes.Rules["kubernetes"]; !ok {
+		t.Error("expected 'kubernetes' scope in defaults")
 	}
 }
 
@@ -34,11 +30,6 @@ func TestArchConfMerge(t *testing.T) {
 			Rules: PathRules{
 				"custom_scope": {{Path: "*.custom"}},
 				"ci":           {{Path: "custom-ci.sh"}},
-			},
-		},
-		Tech: TechnologyConfig{
-			Rules: PathRules{
-				"custom_tech": {{Path: "*.ct"}},
 			},
 		},
 	}
@@ -63,13 +54,6 @@ func TestArchConfMerge(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected user ci rule 'custom-ci.sh' to be present in merged config")
-	}
-
-	if _, ok := merged.Tech.Rules["custom_tech"]; !ok {
-		t.Error("expected user custom_tech to be in merged config")
-	}
-	if _, ok := merged.Tech.Rules["kubernetes"]; !ok {
-		t.Error("expected default 'kubernetes' tech to be preserved in merge")
 	}
 }
 

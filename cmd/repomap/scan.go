@@ -14,6 +14,7 @@ import (
 type ScanOptions struct {
 	Path   string `json:"path" flag:"path" help:"Path to scan" default:"."`
 	Commit string `json:"commit" flag:"commit" help:"Git commit to scan at" default:"HEAD"`
+	All    bool   `json:"all" flag:"all" help:"Show all files including those with no scopes"`
 }
 
 func (opts ScanOptions) GetName() string { return "scan" }
@@ -22,12 +23,13 @@ func (opts ScanOptions) Help() api.Text {
 	return clicky.Text(`Scan a repository and output FileMap for each tracked file.
 
 Uses git ls-files to enumerate tracked files, detecting language,
-scopes, technologies, and Kubernetes references for each file.
+scopes, and Kubernetes references for each file.
+By default, files with no scopes are filtered out. Use --all to show everything.
 
 EXAMPLES:
   repomap scan
-  repomap scan --path ./my-repo
-  repomap scan --commit abc1234`)
+  repomap scan --all
+  repomap scan --path ./my-repo`)
 }
 
 func init() {
@@ -59,6 +61,9 @@ func runScan(opts ScanOptions) (any, error) {
 
 		fm, err := conf.GetFileMap(relPath, opts.Commit)
 		if err != nil {
+			continue
+		}
+		if !opts.All && fm.IsEmpty() {
 			continue
 		}
 		results = append(results, *fm)

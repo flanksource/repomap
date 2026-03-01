@@ -82,27 +82,6 @@ func TestScopesConfigGetScopesByPath(t *testing.T) {
 	}
 }
 
-func TestTechnologyConfigGetTechByPath(t *testing.T) {
-	tc := TechnologyConfig{
-		Rules: PathRules{
-			"kubernetes": {
-				{Path: "kustomization.yaml"},
-			},
-			"go": {
-				{Path: "*.go"},
-			},
-		},
-	}
-
-	tech := tc.GetTechByPath("main.go")
-	if len(tech) == 0 {
-		t.Fatal("expected non-empty tech for main.go")
-	}
-	if tech[0] != ScopeTechnology("go") {
-		t.Errorf("GetTechByPath(main.go)[0] = %q, want 'go'", tech[0])
-	}
-}
-
 func TestPathPatternMatch(t *testing.T) {
 	tests := []struct {
 		pattern  string

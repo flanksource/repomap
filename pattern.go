@@ -131,18 +131,6 @@ func (sc *ScopesConfig) GetScopesByPath(path string) Scopes {
 	return scopes
 }
 
-type TechnologyConfig struct {
-	Rules PathRules `json:"rules,omitempty" yaml:"rules,omitempty"`
-}
-
-func (tc TechnologyConfig) GetTechByPath(path string) Technology {
-	var techs []ScopeTechnology
-	for _, tech := range tc.Rules.Apply(path) {
-		techs = append(techs, ScopeTechnology(tech))
-	}
-	return techs
-}
-
 type PathPattern struct {
 	Pattern string
 	Negate  bool

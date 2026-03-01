@@ -54,7 +54,7 @@ func TestBuildContextWithData(t *testing.T) {
 		Type: repomap.SourceChangeTypeModified,
 		Adds: 10,
 		Dels: 5,
-		Tech: []repomap.ScopeTechnology{repomap.TechKubernetes},
+		Scope: repomap.Scopes{repomap.ScopeType("kubernetes")},
 	}
 
 	replicas := 3

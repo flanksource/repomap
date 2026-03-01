@@ -101,62 +101,6 @@ func (s ScopeType) Pretty() api.Text {
 	return t.Append(string(s))
 }
 
-type Technology []ScopeTechnology
-
-func (t Technology) ToString() []string {
-	var result []string
-	for _, tech := range t {
-		result = append(result, string(tech))
-	}
-	return result
-}
-
-type ScopeTechnology string
-
-const (
-	TechKubernetes    ScopeTechnology = "kubernetes"
-	TechBazel         ScopeTechnology = "bazel"
-	TechDocker        ScopeTechnology = "docker"
-	TechTerraform     ScopeTechnology = "terraform"
-	TechMarkdown      ScopeTechnology = "markdown"
-	TechPrometheus    ScopeTechnology = "prometheus"
-	TechGrafana       ScopeTechnology = "grafana"
-	TechJenkins       ScopeTechnology = "jenkins"
-	TechAnsible       ScopeTechnology = "ansible"
-	TechHelm          ScopeTechnology = "helm"
-	TechGitOps        ScopeTechnology = "gitops"
-	TechAWS           ScopeTechnology = "aws"
-	TechGCP           ScopeTechnology = "gcp"
-	TechAzure         ScopeTechnology = "azure"
-	TechLinux         ScopeTechnology = "linux"
-	TechOpenshift     ScopeTechnology = "openshift"
-	TechMongoDB       ScopeTechnology = "mongodb"
-	TechPostgreSQL    ScopeTechnology = "postgresql"
-	TechMySQL         ScopeTechnology = "mysql"
-	TechRedis         ScopeTechnology = "redis"
-	TechNginx         ScopeTechnology = "nginx"
-	TechClickhouse    ScopeTechnology = "clickhouse"
-	TechKafka         ScopeTechnology = "kafka"
-	TechCassandra     ScopeTechnology = "cassandra"
-	TechGitlab        ScopeTechnology = "gitlab"
-	TechArgoCD        ScopeTechnology = "argocd"
-	TechFluxCD        ScopeTechnology = "fluxcd"
-	TechOpenTelemetry ScopeTechnology = "opentelemetry"
-	TechGitHubActions ScopeTechnology = "github_actions"
-	TechPython        ScopeTechnology = "python"
-	TechJava          ScopeTechnology = "java"
-	TechRuby          ScopeTechnology = "ruby"
-	TechRust          ScopeTechnology = "rust"
-	TechPHP           ScopeTechnology = "php"
-	TechNodeJS        ScopeTechnology = "nodejs"
-	TechGo            ScopeTechnology = "go"
-	TechShell         ScopeTechnology = "shell"
-	TechPowershell    ScopeTechnology = "powershell"
-	TechReact         ScopeTechnology = "react"
-	TechBash          ScopeTechnology = "bash"
-	TechSQL           ScopeTechnology = "sql"
-)
-
 type CommitType string
 
 const (

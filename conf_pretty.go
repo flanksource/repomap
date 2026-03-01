@@ -60,23 +60,6 @@ func (conf *ArchConf) Pretty() api.Text {
 		t = t.NewLine()
 	}
 
-	if len(conf.Tech.Rules) > 0 {
-		t = t.Append("Technology Configuration", "font-bold text-orange-600").NewLine()
-		t = t.Append(indent + "Rules:").NewLine()
-		for tech, rules := range conf.Tech.Rules {
-			t = t.Append(indent+"  "+tech+": ", "font-medium")
-			t = t.Append(fmt.Sprintf("%d pattern(s)", len(rules)), "text-muted").NewLine()
-			for i, rule := range rules {
-				if i < 5 {
-					t = t.Append(indent + "    - " + rule.Path).NewLine()
-				} else if i == 5 {
-					t = t.Append(indent+"    ... and ", "text-muted").Append(fmt.Sprintf("%d more", len(rules)-5), "text-muted").NewLine()
-					break
-				}
-			}
-		}
-	}
-
 	if len(conf.Severity.Rules) > 0 {
 		t = t.Append("Severity Rules", "font-bold text-red-600").NewLine()
 		for expr, sev := range conf.Severity.Rules {

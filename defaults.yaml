@@ -1,4 +1,4 @@
-# Default scope and technology detection rules
+# Default scope detection rules
 # This file is embedded in the binary and provides fallback detection when no repomap.yaml is found
 # Note: These patterns use filepath.Match which only supports * and ?, not **
 
@@ -18,7 +18,6 @@ scopes:
       - path: "*.ps1"
       - path: "*.zsh"
 
-    # Dependencies
     dependency:
       - path: "go.mod"
       - path: "go.sum"
@@ -38,7 +37,6 @@ scopes:
       - path: "composer.json"
       - path: "composer.lock"
 
-    # Documentation
     docs:
       - path: "README.md"
       - path: "README.txt"
@@ -51,23 +49,10 @@ scopes:
       - path: "*.markdown"
       - path: "*.mdx"
 
-    # # Configuration files
-    # config:
-    #   - path: "*.yml"
-    #   - path: "*.yaml"
-    #   - path: "*.json"
-    #   - path: "*.ini"
-    #   - path: "*.toml"
-    #   - path: "*.cfg"
-
-    # Test files (use path contains logic)
     test:
       - path: "*test*"
       - path: "**/*test/**"
 
-tech:
-  rules:
-    # Kubernetes
     kubernetes:
       - path: "kustomization.yaml"
       - path: "kustomization.yml"
@@ -76,27 +61,23 @@ tech:
       - path: "Chart.yaml"
       - path: "chart/**"
 
-    # Terraform
     terraform:
       - path: ".terraform.lock.hcl"
       - path: "*.tf"
       - path: "*.tfvars"
       - path: "*.tf.json"
 
-    # Bazel
     bazel:
       - path: "BUILD.bazel"
       - path: "WORKSPACE"
       - path: "*.bazel"
       - path: "*.bzl"
 
-    # Go
     go:
       - path: "go.mod"
       - path: "go.sum"
       - path: "*.go"
 
-    # Node.js / JavaScript / TypeScript
     nodejs:
       - path: "package.json"
       - path: "package-lock.json"
@@ -105,7 +86,6 @@ tech:
       - path: "*.ts"
       - path: "*.tsx"
 
-    # Python
     python:
       - path: "requirements.txt"
       - path: "Pipfile"
@@ -113,7 +93,6 @@ tech:
       - path: "setup.py"
       - path: "*.py"
 
-    # Java
     java:
       - path: "pom.xml"
       - path: "build.gradle"
@@ -123,40 +102,33 @@ tech:
       - path: "*.kts"
       - path: "*.groovy"
 
-    # Ruby
     ruby:
       - path: "Gemfile"
       - path: "Gemfile.lock"
       - path: "*.rb"
 
-    # Rust
     rust:
       - path: "Cargo.toml"
       - path: "Cargo.lock"
       - path: "*.rs"
 
-    # PHP
     php:
       - path: "composer.json"
       - path: "composer.lock"
       - path: "*.php"
 
-    # Shell scripts
     shell:
       - path: "*.sh"
       - path: "*.bat"
       - path: "*.ps1"
       - path: "*.zsh"
 
-    # Jenkins
     jenkins:
       - path: "Jenkinsfile"
 
-    # Docker
     docker:
       - path: "Dockerfile"
 
-    # Markdown
     markdown:
       - path: "*.md"
       - path: "*.markdown"

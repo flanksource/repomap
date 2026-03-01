@@ -15,13 +15,16 @@ import (
 
 type FileMap struct {
 	Path           string                     `json:"path,omitempty"`
-	Scopes         Scopes                     `json:"scopes,omitempty" yaml:"scope,omitempty"`
+	Scopes         Scopes                     `json:"scopes,omitempty" yaml:"scopes,omitempty"`
 	Language       string                     `json:"language,omitempty" yaml:"language,omitempty"`
-	Tech           Technology                 `json:"tech,omitempty" yaml:"tech,omitempty"`
 	Violations     []Violation                `json:"violations,omitempty" yaml:"violations,omitempty"`
 	Ignored        bool                       `json:"ignored,omitempty" yaml:"ignored,omitempty"`
 	Commits        CommitAnalyses             `json:"commits,omitempty" yaml:"commits,omitempty"`
 	KubernetesRefs []kubernetes.KubernetesRef `json:"kubernetes_refs,omitempty" yaml:"kubernetes_refs,omitempty"`
+}
+
+func (f FileMap) IsEmpty() bool {
+	return len(f.Scopes) == 0 && len(f.Violations) == 0 && len(f.KubernetesRefs) == 0
 }
 
 type Author struct {
@@ -117,13 +120,12 @@ func (lr LineRanges) String() string {
 }
 
 type CommitChange struct {
-	File  string            `json:"file,omitempty"`
-	Node  string            `json:"node,omitempty"`
-	Type  SourceChangeType  `json:"type,omitempty"`
-	Scope Scopes            `json:"scopes,omitempty"`
-	Tech  []ScopeTechnology `json:"tech,omitempty"`
-	Adds  int               `json:"adds,omitempty"`
-	Dels  int               `json:"dels,omitempty"`
+	File  string           `json:"file,omitempty"`
+	Node  string           `json:"node,omitempty"`
+	Type  SourceChangeType `json:"type,omitempty"`
+	Scope Scopes           `json:"scopes,omitempty"`
+	Adds  int              `json:"adds,omitempty"`
+	Dels  int              `json:"dels,omitempty"`
 	// Line numbers that were changed (additions only, in the new file) compressed into ranges
 	LinesChanged      LineRanges                    `json:"lines_changed,omitempty"`
 	KubernetesChanges []kubernetes.KubernetesChange `json:"kubernetes_changes,omitempty"`
@@ -234,7 +236,6 @@ func (c Changes) Summary() CommitChange {
 	summary := CommitChange{}
 	scopes := make(map[ScopeType]struct{})
 	types := make(map[SourceChangeType]struct{})
-	techs := make(map[ScopeTechnology]struct{})
 	for _, change := range c {
 		summary.Adds += change.Adds
 		summary.Dels += change.Dels
@@ -242,9 +243,6 @@ func (c Changes) Summary() CommitChange {
 			scopes[scope] = struct{}{}
 		}
 		types[change.Type] = struct{}{}
-		for _, t := range change.Tech {
-			techs[t] = struct{}{}
-		}
 	}
 
 	summary.Scope = lo.Keys(scopes)
@@ -252,17 +250,13 @@ func (c Changes) Summary() CommitChange {
 	if len(types) == 1 {
 		summary.Type = lo.Keys(types)[0]
 	}
-	if len(techs) > 0 {
-		summary.Tech = lo.Keys(techs)
-	}
 
 	return summary
 }
 
 type CommitAnalysis struct {
 	Commit  `json:",inline"`
-	Tech    []ScopeTechnology `json:"tech,omitempty"`
-	Changes Changes           `json:"changes,omitempty"`
+	Changes Changes `json:"changes,omitempty"`
 	// Original commit before analysis
 	Original Commit `json:"-"`
 	// Pre-computed metrics for performance
@@ -294,7 +288,6 @@ func (ca CommitAnalysis) AsMap() map[string]any {
 	m := ca.Commit.AsMap()
 	m["scope"] = ca.Scope
 	m["commit_type"] = ca.CommitType
-	m["tech"] = ca.Tech
 	m["changes"] = ca.Changes
 	return m
 }
