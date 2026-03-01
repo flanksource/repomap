@@ -265,7 +265,7 @@ func getSeverityBadge(severity ChangeSeverity) (string, string) {
 }
 
 type YAMLDocument struct {
-	StartLine int
-	EndLine   int
-	Content   map[string]interface{}
+	StartLine int                    `json:"start_line,omitempty"`
+	EndLine   int                    `json:"end_line,omitempty"`
+	Content   map[string]interface{} `json:"content,omitempty"`
 }

@@ -19,13 +19,13 @@ import (
 var defaultArchYAML string
 
 type ArchConf struct {
-	Git      GitConfig              `yaml:"git,omitempty"`
-	Build    BuildConfig            `yaml:"build,omitempty"`
-	Golang   GolangConfig           `yaml:"golang,omitempty"`
-	Scopes   ScopesConfig           `yaml:"scopes,omitempty"`
-	Tech     TechnologyConfig       `yaml:"tech,omitempty"`
-	Severity SeverityConfig `yaml:"severity,omitempty"`
-	repoPath string                 `yaml:"-"`
+	Git      GitConfig        `json:"git,omitempty" yaml:"git,omitempty"`
+	Build    BuildConfig      `json:"build,omitempty" yaml:"build,omitempty"`
+	Golang   GolangConfig     `json:"golang,omitempty" yaml:"golang,omitempty"`
+	Scopes   ScopesConfig     `json:"scopes,omitempty" yaml:"scopes,omitempty"`
+	Tech     TechnologyConfig `json:"tech,omitempty" yaml:"tech,omitempty"`
+	Severity SeverityConfig   `json:"severity,omitempty" yaml:"severity,omitempty"`
+	repoPath string           `json:"-" yaml:"-"`
 }
 
 func (conf *ArchConf) GetFileMap(path string, commit string) (*FileMap, error) {

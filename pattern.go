@@ -10,8 +10,8 @@ import (
 )
 
 type PathRule struct {
-	Path   string `yaml:"path"`
-	Prefix string `yaml:"prefix,omitempty"`
+	Path   string `json:"path" yaml:"path"`
+	Prefix string `json:"prefix,omitempty" yaml:"prefix,omitempty"`
 }
 
 func (r PathRule) Match(path string) bool {
@@ -66,33 +66,33 @@ func (pr PathRules) Apply(path string) []string {
 }
 
 type GitConfig struct {
-	Commits              CommitsConfig `yaml:"commits,omitempty"`
-	VersionFieldPatterns []string      `yaml:"version_field_patterns,omitempty"`
+	Commits              CommitsConfig `json:"commits,omitempty" yaml:"commits,omitempty"`
+	VersionFieldPatterns []string      `json:"version_field_patterns,omitempty" yaml:"version_field_patterns,omitempty"`
 }
 
 type CommitsConfig struct {
-	Enabled           bool     `yaml:"enabled"`
-	AllowedTypes      []string `yaml:"allowed_types,omitempty"`
-	Blocklist         []string `yaml:"blocklist,omitempty"`
-	RequiredTrailers  []string `yaml:"required_trailers,omitempty"`
-	RequiredReference bool     `yaml:"required_reference,omitempty"`
-	RequiredScope     bool     `yaml:"required_scope,omitempty"`
+	Enabled           bool     `json:"enabled,omitempty" yaml:"enabled"`
+	AllowedTypes      []string `json:"allowed_types,omitempty" yaml:"allowed_types,omitempty"`
+	Blocklist         []string `json:"blocklist,omitempty" yaml:"blocklist,omitempty"`
+	RequiredTrailers  []string `json:"required_trailers,omitempty" yaml:"required_trailers,omitempty"`
+	RequiredReference bool     `json:"required_reference,omitempty" yaml:"required_reference,omitempty"`
+	RequiredScope     bool     `json:"required_scope,omitempty" yaml:"required_scope,omitempty"`
 }
 
 type BuildConfig struct {
-	Enabled  bool              `yaml:"enabled"`
-	Tool     string            `yaml:"tool,omitempty"`
-	Commands map[string]string `yaml:"commands,omitempty"`
+	Enabled  bool              `json:"enabled,omitempty" yaml:"enabled"`
+	Tool     string            `json:"tool,omitempty" yaml:"tool,omitempty"`
+	Commands map[string]string `json:"commands,omitempty" yaml:"commands,omitempty"`
 }
 
 type GolangConfig struct {
-	Enabled   bool     `yaml:"enabled"`
-	Blocklist []string `yaml:"blocklist,omitempty"`
+	Enabled   bool     `json:"enabled,omitempty" yaml:"enabled"`
+	Blocklist []string `json:"blocklist,omitempty" yaml:"blocklist,omitempty"`
 }
 
 type ScopesConfig struct {
-	AllowedScopes []string  `yaml:"allowed_scopes,omitempty"`
-	Rules         PathRules `yaml:"rules,omitempty"`
+	AllowedScopes []string  `json:"allowed_scopes,omitempty" yaml:"allowed_scopes,omitempty"`
+	Rules         PathRules `json:"rules,omitempty" yaml:"rules,omitempty"`
 }
 
 func (sc *ScopesConfig) Validate() error {
@@ -132,7 +132,7 @@ func (sc *ScopesConfig) GetScopesByPath(path string) Scopes {
 }
 
 type TechnologyConfig struct {
-	Rules PathRules `yaml:"rules,omitempty"`
+	Rules PathRules `json:"rules,omitempty" yaml:"rules,omitempty"`
 }
 
 func (tc TechnologyConfig) GetTechByPath(path string) Technology {

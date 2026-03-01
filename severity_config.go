@@ -7,8 +7,8 @@ import (
 )
 
 type SeverityConfig struct {
-	Default Severity            `yaml:"default"`
-	Rules   map[string]Severity `yaml:"rules"`
+	Default Severity            `json:"default,omitempty" yaml:"default"`
+	Rules   map[string]Severity `json:"rules,omitempty" yaml:"rules"`
 }
 
 func DefaultSeverityConfig() *SeverityConfig {

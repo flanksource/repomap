@@ -14,14 +14,14 @@ import (
 )
 
 type FileMap struct {
-	Path           string
-	Scopes         Scopes                     `yaml:"scope,omitempty"`
-	Language       string                     `yaml:"language,omitempty"`
-	Tech           Technology                 `yaml:"tech,omitempty"`
-	Violations     []Violation                `yaml:"violations,omitempty"`
-	Ignored        bool                       `yaml:"ignored,omitempty"`
-	Commits        CommitAnalyses             `yaml:"commits,omitempty"`
-	KubernetesRefs []kubernetes.KubernetesRef `yaml:"kubernetes_refs,omitempty" json:"kubernetes_refs,omitempty"`
+	Path           string                     `json:"path,omitempty"`
+	Scopes         Scopes                     `json:"scopes,omitempty" yaml:"scope,omitempty"`
+	Language       string                     `json:"language,omitempty" yaml:"language,omitempty"`
+	Tech           Technology                 `json:"tech,omitempty" yaml:"tech,omitempty"`
+	Violations     []Violation                `json:"violations,omitempty" yaml:"violations,omitempty"`
+	Ignored        bool                       `json:"ignored,omitempty" yaml:"ignored,omitempty"`
+	Commits        CommitAnalyses             `json:"commits,omitempty" yaml:"commits,omitempty"`
+	KubernetesRefs []kubernetes.KubernetesRef `json:"kubernetes_refs,omitempty" yaml:"kubernetes_refs,omitempty"`
 }
 
 type Author struct {
@@ -169,11 +169,11 @@ func (c Commit) AsMap() map[string]any {
 }
 
 type FilePatch struct {
-	OldPath   string
-	NewPath   string
-	IsNew     bool
-	IsDeleted bool
-	Patch     string
+	OldPath   string `json:"old_path,omitempty"`
+	NewPath   string `json:"new_path,omitempty"`
+	IsNew     bool   `json:"is_new,omitempty"`
+	IsDeleted bool   `json:"is_deleted,omitempty"`
+	Patch     string `json:"patch,omitempty"`
 }
 
 func (c *Commit) ParsePatch() []FilePatch {
@@ -360,17 +360,17 @@ type Violation struct {
 	Column   int               `json:"column,omitempty"`
 	Message  *string           `json:"message,omitempty"`
 	Source   string            `json:"source,omitempty"`
-	Severity ViolationSeverity `yaml:"severity,omitempty"`
+	Severity ViolationSeverity `json:"severity,omitempty" yaml:"severity,omitempty"`
 }
 
 type ScanResult struct {
-	Files  []FileMap
-	Errors []ScanError
+	Files  []FileMap   `json:"files,omitempty"`
+	Errors []ScanError `json:"errors,omitempty"`
 }
 
 type ScanError struct {
-	Path string
-	Err  error
+	Path string `json:"path,omitempty"`
+	Err  error  `json:"err,omitempty"`
 }
 
 func (e ScanError) Error() string {
