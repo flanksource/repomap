@@ -1,0 +1,171 @@
+# Default scope and technology detection rules
+# This file is embedded in the binary and provides fallback detection when user's arch.yaml has no matching rules
+# Note: These patterns use filepath.Match which only supports * and ?, not **
+
+scopes:
+  rules:
+    ci:
+      - path: "BUILD.bazel"
+      - path: "WORKSPACE"
+      - path: "*.bazel"
+      - path: "*.bzl"
+      - path: "Jenkinsfile"
+      - path: "Makefile"
+      - path: "Taskefile"
+      - path: "Taskfile.yml"
+      - path: "*.sh"
+      - path: "*.bat"
+      - path: "*.ps1"
+      - path: "*.zsh"
+
+    # Dependencies
+    dependency:
+      - path: "go.mod"
+      - path: "go.sum"
+      - path: "package.json"
+      - path: "package-lock.json"
+      - path: "requirements.txt"
+      - path: "Pipfile"
+      - path: "Pipfile.lock"
+      - path: "setup.py"
+      - path: "pom.xml"
+      - path: "build.gradle"
+      - path: "build.gradle.kts"
+      - path: "Gemfile"
+      - path: "Gemfile.lock"
+      - path: "Cargo.toml"
+      - path: "Cargo.lock"
+      - path: "composer.json"
+      - path: "composer.lock"
+
+    # Documentation
+    docs:
+      - path: "README.md"
+      - path: "README.txt"
+      - path: "README"
+      - path: "README.rst"
+      - path: "CHANGELOG.md"
+      - path: "CHANGELOG"
+      - path: "CHANGELOG.txt"
+      - path: "*.md"
+      - path: "*.markdown"
+      - path: "*.mdx"
+
+    # # Configuration files
+    # config:
+    #   - path: "*.yml"
+    #   - path: "*.yaml"
+    #   - path: "*.json"
+    #   - path: "*.ini"
+    #   - path: "*.toml"
+    #   - path: "*.cfg"
+
+    # Test files (use path contains logic)
+    test:
+      - path: "*test*"
+      - path: "**/*test/**"
+
+tech:
+  rules:
+    # Kubernetes
+    kubernetes:
+      - path: "kustomization.yaml"
+      - path: "kustomization.yml"
+
+    helm:
+      - path: "Chart.yaml"
+      - path: "chart/**"
+
+    # Terraform
+    terraform:
+      - path: ".terraform.lock.hcl"
+      - path: "*.tf"
+      - path: "*.tfvars"
+      - path: "*.tf.json"
+
+    # Bazel
+    bazel:
+      - path: "BUILD.bazel"
+      - path: "WORKSPACE"
+      - path: "*.bazel"
+      - path: "*.bzl"
+
+    # Go
+    go:
+      - path: "go.mod"
+      - path: "go.sum"
+      - path: "*.go"
+
+    # Node.js / JavaScript / TypeScript
+    nodejs:
+      - path: "package.json"
+      - path: "package-lock.json"
+      - path: "*.js"
+      - path: "*.jsx"
+      - path: "*.ts"
+      - path: "*.tsx"
+
+    # Python
+    python:
+      - path: "requirements.txt"
+      - path: "Pipfile"
+      - path: "Pipfile.lock"
+      - path: "setup.py"
+      - path: "*.py"
+
+    # Java
+    java:
+      - path: "pom.xml"
+      - path: "build.gradle"
+      - path: "build.gradle.kts"
+      - path: "*.java"
+      - path: "*.kt"
+      - path: "*.kts"
+      - path: "*.groovy"
+
+    # Ruby
+    ruby:
+      - path: "Gemfile"
+      - path: "Gemfile.lock"
+      - path: "*.rb"
+
+    # Rust
+    rust:
+      - path: "Cargo.toml"
+      - path: "Cargo.lock"
+      - path: "*.rs"
+
+    # PHP
+    php:
+      - path: "composer.json"
+      - path: "composer.lock"
+      - path: "*.php"
+
+    # Shell scripts
+    shell:
+      - path: "*.sh"
+      - path: "*.bat"
+      - path: "*.ps1"
+      - path: "*.zsh"
+
+    # Jenkins
+    jenkins:
+      - path: "Jenkinsfile"
+
+    # Docker
+    docker:
+      - path: "Dockerfile"
+
+    # Markdown
+    markdown:
+      - path: "*.md"
+      - path: "*.markdown"
+      - path: "*.mdx"
+
+git:
+  version_field_patterns:
+    - "**.image"
+    - "**.tag"
+    - "**.version"
+    - "**.appVersion"
+    - "**.imageTag"
