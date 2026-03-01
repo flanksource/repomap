@@ -1,5 +1,5 @@
 # Default scope and technology detection rules
-# This file is embedded in the binary and provides fallback detection when user's arch.yaml has no matching rules
+# This file is embedded in the binary and provides fallback detection when no repomap.yaml is found
 # Note: These patterns use filepath.Match which only supports * and ?, not **
 
 scopes:

@@ -91,7 +91,7 @@ func FindGitRoot(path string) string {
 func GetFileMap(path string, commit string) (*FileMap, error) {
 	userConf, err := GetConfForFile(path)
 	if err != nil {
-		return nil, oops.Wrapf(err, "failed to get arch.yaml for %s", path)
+		return nil, oops.Wrapf(err, "failed to get repomap.yaml for %s", path)
 	}
 
 	defaultConf, err := LoadDefaultArchConf()
@@ -113,7 +113,7 @@ func GetFileMap(path string, commit string) (*FileMap, error) {
 func GetConf(path string) (*ArchConf, error) {
 	userConf, err := GetConfForFile(path)
 	if err != nil {
-		return nil, oops.Wrapf(err, "failed to get arch.yaml for %s", path)
+		return nil, oops.Wrapf(err, "failed to get repomap.yaml for %s", path)
 	}
 
 	defaultConf, err := LoadDefaultArchConf()
@@ -138,7 +138,7 @@ func GetConfForFile(path string) (*ArchConf, error) {
 	}
 
 	path, _ = filepath.Abs(path)
-	file := filepath.Join(path, "arch.yaml")
+	file := filepath.Join(path, "repomap.yaml")
 	if stat, err := os.Stat(file); os.IsNotExist(err) {
 		if IsGitRoot(path) {
 			return nil, nil
@@ -157,7 +157,7 @@ func GetConfForFile(path string) (*ArchConf, error) {
 func LoadArchConf(path string) (*ArchConf, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, oops.Wrapf(err, "failed to load arch.yaml from %s", path)
+		return nil, oops.Wrapf(err, "failed to load repomap.yaml from %s", path)
 	}
 
 	var conf ArchConf
