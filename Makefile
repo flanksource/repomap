@@ -1,0 +1,16 @@
+.PHONY: build install test lint fmt
+
+build:
+	go build -o .bin/repomap ./cmd/repomap
+
+install:
+	go install ./cmd/repomap
+
+test:
+	go test ./...
+
+lint:
+	golangci-lint run
+
+fmt:
+	gofmt -s -w .
