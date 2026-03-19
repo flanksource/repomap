@@ -1,0 +1,4 @@
+scopes:
+  rules:
+    networking:
+      - apiVersion: "networking.k8s.io/*"

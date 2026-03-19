@@ -13,9 +13,16 @@ import (
 	"github.com/samber/lo"
 )
 
+type ScopeMatch struct {
+	Scope string `json:"scope,omitempty"`
+	Rule  string `json:"rule,omitempty"`
+	Type  string `json:"type,omitempty"` // "path", "resource", "cel"
+}
+
 type FileMap struct {
 	Path           string                     `json:"path,omitempty"`
 	Scopes         Scopes                     `json:"scopes,omitempty" yaml:"scopes,omitempty"`
+	ScopeMatches   []ScopeMatch               `json:"scope_matches,omitempty" yaml:"scope_matches,omitempty"`
 	Language       string                     `json:"language,omitempty" yaml:"language,omitempty"`
 	Violations     []Violation                `json:"violations,omitempty" yaml:"violations,omitempty"`
 	Ignored        bool                       `json:"ignored,omitempty" yaml:"ignored,omitempty"`

@@ -1,0 +1,6 @@
+scopes:
+  rules:
+    security:
+      - kind: "Secret"
+    networking:
+      - kind: "Service"

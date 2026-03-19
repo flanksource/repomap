@@ -20,9 +20,9 @@ func TestEngineEvaluate(t *testing.T) {
 	config := &repomap.SeverityConfig{
 		Default: repomap.Medium,
 		Rules: map[string]repomap.Severity{
-			`change.type == "deleted"`:     repomap.Critical,
-			`kubernetes.kind == "Secret"`:  repomap.Critical,
-			`commit.line_changes > 100`:    repomap.High,
+			`change.type == "deleted"`:    repomap.Critical,
+			`kubernetes.kind == "Secret"`: repomap.Critical,
+			`commit.line_changes > 100`:   repomap.High,
 		},
 	}
 

@@ -6,9 +6,16 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
+type SeverityRule struct {
+	ID       string   `json:"id,omitempty" yaml:"id,omitempty"`
+	When     string   `json:"when" yaml:"when"`
+	Severity Severity `json:"severity" yaml:"severity"`
+}
+
 type SeverityConfig struct {
-	Default Severity            `json:"default,omitempty" yaml:"default"`
-	Rules   map[string]Severity `json:"rules,omitempty" yaml:"rules"`
+	Default   Severity            `json:"default,omitempty" yaml:"default"`
+	Rules     map[string]Severity `json:"rules,omitempty" yaml:"rules"`
+	RulesList []SeverityRule      `json:"rules_list,omitempty" yaml:"rules_list,omitempty"`
 }
 
 func DefaultSeverityConfig() *SeverityConfig {
@@ -84,8 +91,9 @@ func (c *SeverityConfig) Merge(overrides *SeverityConfig) *SeverityConfig {
 	}
 
 	merged := &SeverityConfig{
-		Default: c.Default,
-		Rules:   make(map[string]Severity),
+		Default:   c.Default,
+		Rules:     make(map[string]Severity),
+		RulesList: sliceCopy(c.RulesList),
 	}
 
 	for expr, sev := range c.Rules {
@@ -95,9 +103,26 @@ func (c *SeverityConfig) Merge(overrides *SeverityConfig) *SeverityConfig {
 		merged.Rules[expr] = sev
 	}
 
+	if len(overrides.RulesList) > 0 {
+		merged.RulesList = append(merged.RulesList, overrides.RulesList...)
+	}
+
 	if overrides.Default.Value() > 0 {
 		merged.Default = overrides.Default
 	}
 
 	return merged
+}
+
+// AllRules returns all rules as a map, combining both map-based and list-based rules.
+// List-based rules take precedence over map-based rules with the same expression.
+func (c *SeverityConfig) AllRules() map[string]Severity {
+	all := make(map[string]Severity, len(c.Rules)+len(c.RulesList))
+	for expr, sev := range c.Rules {
+		all[expr] = sev
+	}
+	for _, rule := range c.RulesList {
+		all[rule.When] = rule.Severity
+	}
+	return all
 }

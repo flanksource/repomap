@@ -13,29 +13,34 @@ import (
 )
 
 type ScanOptions struct {
-	Path   string `json:"path" args:"true" help:"Path to scan"`
-	Commit string `json:"commit" flag:"commit" help:"Git commit to scan at" default:"HEAD"`
-	All    bool   `json:"all" flag:"all" help:"Show all files including those with no scopes"`
-	Flat   bool   `json:"flat" flag:"flat" help:"Output flat list instead of tree"`
+	Path    string `json:"path" args:"true" help:"Path to scan"`
+	Commit  string `json:"commit" flag:"commit" help:"Git commit to scan at" default:"HEAD"`
+	All     bool   `json:"all" flag:"all" help:"Show all files including those with no scopes"`
+	Flat    bool   `json:"flat" flag:"flat" help:"Output flat list instead of tree"`
+	Verbose bool   `json:"verbose" flag:"verbose" help:"Show scope rules that matched each file"`
 }
 
 func (opts ScanOptions) GetName() string { return "scan" }
 
 func (opts ScanOptions) Help() api.Text {
-	return clicky.Text(`Scan a repository and output FileMap for each tracked file.
+	return clicky.Text(`Scan a repository and classify tracked files by language, scope,
+and Kubernetes references.
 
-Uses git ls-files to enumerate tracked files, detecting language,
-scopes, and Kubernetes references for each file.
-By default, files with no scopes are filtered out. Use --all to show everything.
+Uses git ls-files to enumerate tracked files. Outputs a tree view
+by default, or a flat table with --flat. Files with no scopes are
+hidden unless --all is specified.
 
 EXAMPLES:
-  repomap scan
-  repomap scan --all
-  repomap scan --path ./my-repo`)
+  repomap scan                  # scan current directory as tree
+  repomap scan ./my-repo        # scan a specific path
+  repomap scan --all            # include unclassified files
+  repomap scan --flat           # flat table output
+  repomap scan --format json    # JSON output`)
 }
 
 func init() {
-	clicky.AddCommand(rootCmd, ScanOptions{}, runScan)
+	cmd := clicky.AddCommand(rootCmd, ScanOptions{}, runScan)
+	cmd.Short = "Classify tracked files by language, scope, and Kubernetes references"
 }
 
 func runScan(opts ScanOptions) (any, error) {
@@ -79,6 +84,9 @@ func runScan(opts ScanOptions) (any, error) {
 		}
 		if !opts.All && fm.IsEmpty() {
 			continue
+		}
+		if !opts.Verbose {
+			fm.ScopeMatches = nil
 		}
 		results = append(results, *fm)
 	}

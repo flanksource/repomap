@@ -1,0 +1,269 @@
+# Comprehensive repomap.yaml example
+# Place as repomap.yaml (or .gavel.yaml, arch.yaml) in your repo root
+# User config is merged with built-in defaults
+
+# ─── Presets ───────────────────────────────────────────────────────────────────
+# Reusable exclusion groups referenced by "extends"
+presets:
+  bots:
+    exclude:
+      authors:
+        - "dependabot*"
+        - "renovate*"
+        - "github-actions*"
+        - "*[bot]*"
+  noise:
+    exclude:
+      files:
+        - "*.lock"
+        - "go.sum"
+        - "package-lock.json"
+        - "yarn.lock"
+        - "pnpm-lock.yaml"
+  merges:
+    exclude:
+      rules:
+        - when: "commit.is_merge"
+  # Custom preset: ignore auto-generated code
+  generated:
+    exclude:
+      files:
+        - "*.pb.go"
+        - "*.gen.go"
+        - "*_generated.go"
+        - "zz_generated.*"
+        - "vendor/**"
+      authors:
+        - "codegen-bot"
+
+# ─── Extends ──────────────────────────────────────────────────────────────────
+# Activate presets (prefix "preset:" is optional)
+extends:
+  - preset:bots
+  - preset:noise
+  - preset:merges
+  - preset:generated
+
+# ─── Exclude ──────────────────────────────────────────────────────────────────
+# Direct exclusion rules (merged with preset exclusions)
+exclude:
+  files:
+    - "*.min.js"
+    - "*.min.css"
+    - "dist/**"
+    - ".github/**"
+
+  authors:
+    - "noreply@*"
+
+  commits:
+    - "Merge branch*"
+    - "Revert *"
+
+  commit_types:
+    - "chore"
+    - "style"
+
+  # Exclude specific Kubernetes resources by kind/name/namespace
+  resources:
+    - kind: "ConfigMap"
+      name: "kube-root-ca.crt"
+    - kind: "Secret"
+      namespace: "kube-system"
+    - kind: "Endpoints"
+    - kind: "Event"
+    - when: 'kubernetes.name.startsWith("test-")'
+
+  # CEL-based exclusion rules evaluated against commit context
+  rules:
+    - when: "commit.is_merge"
+    - when: 'commit.type == "chore" && commit.scope == "deps"'
+
+# ─── Scopes ───────────────────────────────────────────────────────────────────
+# Scope rules classify files and Kubernetes resources into categories.
+# Three rule types are supported:
+#   1. path:       glob pattern matched against file path (doublestar: *, ?, **, {a,b})
+#   2. resource:   kind/name/namespace/apiVersion matched against K8s resources in YAML files
+#   3. CEL:        "when" expression evaluated against kubernetes.* and file.* context
+scopes:
+  rules:
+    # ── Path-based rules ──
+    app:
+      - path: "cmd/**"
+      - path: "pkg/**"
+      - path: "internal/**"
+      - path: "src/**"
+
+    api:
+      - path: "api/**"
+      - path: "*.proto"
+      - path: "openapi.yaml"
+
+    ci:
+      - path: "Makefile"
+      - path: "Taskfile.yml"
+      - path: "Jenkinsfile"
+      - path: ".github/workflows/*.yml"
+      - path: "*.sh"
+
+    docs:
+      - path: "*.md"
+      - path: "*.mdx"
+      - path: "docs/**"
+
+    test:
+      - path: "*test*"
+      - path: "*_test.go"
+      - path: "*.spec.ts"
+
+    # ── Resource-based rules (matched against K8s resources found in YAML files) ──
+    # Glob patterns supported for kind, name, namespace, apiVersion
+    kubernetes:
+      - path: "kustomization.yaml"
+      - kind: "*"                          # any K8s resource triggers this scope
+
+    security:
+      - path: "**/*rbac*"
+      - kind: "Secret"
+      - kind: "ServiceAccount"
+      - kind: "Role"
+      - kind: "ClusterRole"
+      - kind: "RoleBinding"
+      - kind: "ClusterRoleBinding"
+      - kind: "NetworkPolicy"
+
+    networking:
+      - kind: "Service"
+      - kind: "Ingress"
+      - kind: "IngressRoute"
+
+    database:
+      - path: "migrations/**"
+      - path: "*.sql"
+      - kind: "PostgreSQL"                 # custom CRD kind
+      - kind: "*SQL*"                      # glob: matches MySQL, PostgreSQL, etc.
+
+    observability:
+      - kind: "ServiceMonitor"
+      - kind: "PrometheusRule"
+      - kind: "Alertmanager"
+      - name: "*-monitoring"               # any resource named *-monitoring
+
+    scaling:
+      - kind: "HorizontalPodAutoscaler"
+      - kind: "VerticalPodAutoscaler"
+      - kind: "PodDisruptionBudget"
+
+    # Namespace-scoped resource rules
+    infrastructure:
+      - path: "infra/**"
+      - namespace: "kube-system"           # resources in kube-system
+      - kind: "Namespace"
+
+    # Combined resource filters (all fields must match)
+    secrets:
+      - kind: "Secret"
+        namespace: "production"            # only production secrets
+
+    # ── CEL-based rules (evaluated per K8s resource) ──
+    # Context: kubernetes.kind, kubernetes.name, kubernetes.namespace,
+    #          kubernetes.api_version, kubernetes.labels, kubernetes.annotations
+    deployment:
+      - kind: "Deployment"
+      - kind: "StatefulSet"
+      - kind: "DaemonSet"
+      - when: 'kubernetes.kind == "CronJob" || kubernetes.kind == "Job"'
+
+    flux:
+      - when: 'kubernetes.api_version.startsWith("source.toolkit.fluxcd.io")'
+      - when: 'kubernetes.api_version.startsWith("kustomize.toolkit.fluxcd.io")'
+      - when: 'kubernetes.api_version.startsWith("helm.toolkit.fluxcd.io")'
+
+    argo:
+      - when: 'kubernetes.api_version.startsWith("argoproj.io")'
+
+    cert-manager:
+      - when: 'kubernetes.api_version.startsWith("cert-manager.io")'
+
+    canary:
+      - when: 'kubernetes.labels.tier == "canary"'
+      - when: 'kubernetes.annotations.deployment_strategy == "canary"'
+
+# ─── Severity ─────────────────────────────────────────────────────────────────
+# CEL-based rules to classify change severity
+# Context variables: commit.*, change.*, kubernetes.*, file.*
+severity:
+  default: medium
+
+  rules:
+    'change.type == "deleted"': critical
+    'commit.line_changes > 500': critical
+    'commit.line_changes > 100': high
+    'commit.file_count > 20': critical
+    'commit.file_count > 10': high
+
+    'kubernetes.kind == "Secret"': critical
+    'kubernetes.kind == "ServiceAccount"': high
+    'kubernetes.kind == "Role"': high
+    'kubernetes.kind == "ClusterRole"': high
+
+    'kubernetes.kind == "Service"': high
+    'kubernetes.kind == "Ingress"': high
+    'kubernetes.kind == "NetworkPolicy"': high
+
+    'kubernetes.version_downgrade != ""': high
+    'kubernetes.version_upgrade == "major"': high
+    'kubernetes.has_sha_change': high
+
+    'kubernetes.replica_delta > 10': high
+    'kubernetes.replica_delta < -5': high
+    'kubernetes.has_env_change': medium
+    'kubernetes.has_resource_change': medium
+
+    'file.extension == ".env"': high
+    'file.is_config && change.type == "modified"': medium
+
+  rules_list:
+    - id: production-namespace
+      when: 'kubernetes.namespace == "production" && change.type == "modified"'
+      severity: high
+
+    - id: crd-changes
+      when: 'kubernetes.kind == "CustomResourceDefinition"'
+      severity: critical
+
+# ─── Git ──────────────────────────────────────────────────────────────────────
+git:
+  version_field_patterns:
+    - "**.image"
+    - "**.tag"
+    - "**.version"
+    - "**.appVersion"
+    - "**.imageTag"
+
+  commits:
+    enabled: true
+    allowed_types: [feat, fix, chore, docs, style, refactor, perf, test, ci, build, revert]
+    blocklist:
+      - "WIP*"
+      - "fixup!*"
+    required_trailers:
+      - "Signed-off-by"
+    required_reference: true
+    required_scope: false
+
+# ─── Build ────────────────────────────────────────────────────────────────────
+build:
+  enabled: true
+  tool: make
+  commands:
+    build: "make build"
+    test: "make test"
+    lint: "make lint"
+
+# ─── Golang ───────────────────────────────────────────────────────────────────
+golang:
+  enabled: true
+  blocklist:
+    - "github.com/pkg/errors"
+    - "io/ioutil"

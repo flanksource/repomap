@@ -2,6 +2,36 @@
 # This file is embedded in the binary and provides fallback detection when no repomap.yaml is found
 # Note: These patterns use filepath.Match which only supports * and ?, not **
 
+presets:
+  bots:
+    exclude:
+      authors:
+        - "dependabot*"
+        - "renovate*"
+        - "github-actions*"
+        - "*[bot]*"
+  noise:
+    exclude:
+      files:
+        - "*.lock"
+        - "go.sum"
+        - "package-lock.json"
+        - "yarn.lock"
+        - "pnpm-lock.yaml"
+        - "Pipfile.lock"
+        - "Gemfile.lock"
+        - "Cargo.lock"
+        - "composer.lock"
+  merges:
+    exclude:
+      rules:
+        - when: "commit.is_merge"
+
+extends:
+  - preset:bots
+  - preset:noise
+  - preset:merges
+
 scopes:
   rules:
     ci:
@@ -56,6 +86,7 @@ scopes:
     kubernetes:
       - path: "kustomization.yaml"
       - path: "kustomization.yml"
+      - kind: "*"
 
     helm:
       - path: "Chart.yaml"
@@ -66,6 +97,20 @@ scopes:
       - path: "*.tf"
       - path: "*.tfvars"
       - path: "*.tf.json"
+
+    security:
+      - kind: "Secret"
+      - kind: "ServiceAccount"
+      - kind: "Role"
+      - kind: "ClusterRole"
+      - kind: "RoleBinding"
+      - kind: "ClusterRoleBinding"
+      - kind: "NetworkPolicy"
+
+    networking:
+      - kind: "Service"
+      - kind: "Ingress"
+      - kind: "IngressRoute"
 
     bazel:
       - path: "BUILD.bazel"

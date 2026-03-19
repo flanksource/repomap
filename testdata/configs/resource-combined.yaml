@@ -1,0 +1,5 @@
+scopes:
+  rules:
+    secrets:
+      - kind: "Secret"
+        namespace: "production"

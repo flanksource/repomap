@@ -1,0 +1,6 @@
+scopes:
+  rules:
+    security:
+      - path: "**/*rbac*"
+      - kind: "Secret"
+      - when: 'kubernetes.kind == "NetworkPolicy"'

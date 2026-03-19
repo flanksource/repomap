@@ -36,13 +36,15 @@ func NewEngine(config *repomap.SeverityConfig) (*Engine, error) {
 		return nil, fmt.Errorf("failed to create CEL environment: %w", err)
 	}
 
+	allRules := config.AllRules()
+
 	engine := &Engine{
 		config:        config,
 		celEnv:        env,
-		compiledRules: make([]compiledRule, 0, len(config.Rules)),
+		compiledRules: make([]compiledRule, 0, len(allRules)),
 	}
 
-	for expr, severity := range config.Rules {
+	for expr, severity := range allRules {
 		program, err := engine.compileExpression(expr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile rule '%s': %w", expr, err)

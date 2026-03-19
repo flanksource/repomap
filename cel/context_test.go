@@ -50,10 +50,10 @@ func TestBuildContextWithData(t *testing.T) {
 	}
 
 	change := &repomap.CommitChange{
-		File: "deploy.yaml",
-		Type: repomap.SourceChangeTypeModified,
-		Adds: 10,
-		Dels: 5,
+		File:  "deploy.yaml",
+		Type:  repomap.SourceChangeTypeModified,
+		Adds:  10,
+		Dels:  5,
 		Scope: repomap.Scopes{repomap.ScopeType("kubernetes")},
 	}
 

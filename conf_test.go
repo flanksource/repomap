@@ -34,7 +34,10 @@ func TestArchConfMerge(t *testing.T) {
 		},
 	}
 
-	merged := defaults.Merge(user)
+	merged, err := defaults.Merge(user)
+	if err != nil {
+		t.Fatalf("Merge() error: %v", err)
+	}
 
 	if _, ok := merged.Scopes.Rules["custom_scope"]; !ok {
 		t.Error("expected user custom_scope to be in merged config")
@@ -63,7 +66,10 @@ func TestArchConfMergeNilUser(t *testing.T) {
 		t.Fatalf("LoadDefaultArchConf() error: %v", err)
 	}
 
-	merged := defaults.Merge(nil)
+	merged, err := defaults.Merge(nil)
+	if err != nil {
+		t.Fatalf("Merge() error: %v", err)
+	}
 	if len(merged.Scopes.Rules) != len(defaults.Scopes.Rules) {
 		t.Errorf("merging with nil should return defaults, got %d rules vs %d",
 			len(merged.Scopes.Rules), len(defaults.Scopes.Rules))
@@ -102,5 +108,134 @@ func TestIsGitRoot(t *testing.T) {
 	}
 	if !IsGitRoot(root) {
 		t.Errorf("IsGitRoot(%q) = false, want true", root)
+	}
+}
+
+func TestGetFileMapScopeMatches(t *testing.T) {
+	sc := &ScopesConfig{
+		Rules: PathRules{
+			"security": {
+				{Kind: "Secret"},
+				{Kind: "Role"},
+			},
+			"networking": {
+				{Kind: "Service"},
+				{Kind: "Ingress"},
+			},
+			"kubernetes": {
+				{Kind: "*"},
+			},
+		},
+	}
+	if err := sc.Validate(); err != nil {
+		t.Fatalf("Validate() error: %v", err)
+	}
+
+	tests := []struct {
+		name           string
+		path           string
+		expectedScopes []string
+		expectedTypes  []string
+	}{
+		{
+			name:           "security yaml returns resource matches",
+			path:           "testdata/k8s/security.yaml",
+			expectedScopes: []string{"kubernetes", "security"},
+			expectedTypes:  []string{"resource", "resource"},
+		},
+		{
+			name:           "networking yaml returns resource matches",
+			path:           "testdata/k8s/networking.yaml",
+			expectedScopes: []string{"kubernetes", "networking"},
+			expectedTypes:  []string{"resource", "resource"},
+		},
+	}
+
+	root := FindGitRoot(".")
+	if root == "" {
+		t.Skip("not inside a git repository")
+	}
+
+	conf := &ArchConf{
+		Scopes:   *sc,
+		repoPath: root,
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fm, err := conf.GetFileMap(tt.path, "HEAD")
+			if err != nil {
+				t.Fatalf("GetFileMap() error: %v", err)
+			}
+			if len(fm.ScopeMatches) == 0 {
+				t.Fatal("expected non-empty ScopeMatches")
+			}
+
+			scopeSet := make(map[string]bool)
+			typeSet := make(map[string]bool)
+			for _, m := range fm.ScopeMatches {
+				scopeSet[m.Scope] = true
+				typeSet[m.Type] = true
+			}
+
+			for _, expected := range tt.expectedScopes {
+				if !scopeSet[expected] {
+					t.Errorf("expected scope %q in matches, got %+v", expected, fm.ScopeMatches)
+				}
+			}
+			for _, expected := range tt.expectedTypes {
+				if !typeSet[expected] {
+					t.Errorf("expected type %q in matches, got %+v", expected, fm.ScopeMatches)
+				}
+			}
+		})
+	}
+}
+
+func TestGetFileMapPathScopeMatches(t *testing.T) {
+	sc := &ScopesConfig{
+		Rules: PathRules{
+			"go":   {{Path: "*.go"}},
+			"test": {{Path: "*test*"}},
+			"ci":   {{Path: "Makefile"}},
+		},
+	}
+	if err := sc.Validate(); err != nil {
+		t.Fatalf("Validate() error: %v", err)
+	}
+
+	conf := &ArchConf{Scopes: *sc}
+
+	tests := []struct {
+		path           string
+		expectedScopes []string
+	}{
+		{"main_test.go", []string{"test", "go"}},
+		{"Makefile", []string{"ci"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			fm, err := conf.GetFileMap(tt.path, "")
+			if err != nil {
+				t.Fatalf("GetFileMap() error: %v", err)
+			}
+			if len(fm.ScopeMatches) != len(tt.expectedScopes) {
+				t.Fatalf("expected %d scope matches, got %d: %+v",
+					len(tt.expectedScopes), len(fm.ScopeMatches), fm.ScopeMatches)
+			}
+			for _, expected := range tt.expectedScopes {
+				found := false
+				for _, m := range fm.ScopeMatches {
+					if m.Scope == expected && m.Type == "path" {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected path scope match %q, got %+v", expected, fm.ScopeMatches)
+				}
+			}
+		})
 	}
 }

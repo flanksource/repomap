@@ -8,10 +8,10 @@ import (
 
 func TestParseCommitTypeAndScope(t *testing.T) {
 	tests := []struct {
-		subject      string
-		expectedType repomap.CommitType
+		subject       string
+		expectedType  repomap.CommitType
 		expectedScope repomap.ScopeType
-		expectedSubj string
+		expectedSubj  string
 	}{
 		{"feat(auth): add login", repomap.CommitTypeFeat, repomap.ScopeType("auth"), "add login"},
 		{"fix: null pointer", repomap.CommitTypeFix, repomap.ScopeTypeUnknown, "null pointer"},
@@ -35,7 +35,7 @@ func TestParseCommitTypeAndScope(t *testing.T) {
 
 func TestParseReference(t *testing.T) {
 	tests := []struct {
-		input       string
+		input        string
 		expectedSubj string
 		expectedRef  string
 	}{

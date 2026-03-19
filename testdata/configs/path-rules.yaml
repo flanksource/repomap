@@ -1,0 +1,13 @@
+scopes:
+  rules:
+    go:
+      - path: "*.go"
+    test:
+      - path: "*_test.go"
+    ci:
+      - path: "Makefile"
+      - path: "*.sh"
+    app:
+      - path: "cmd/**"
+    docs:
+      - path: "docs/**/*.md"

@@ -17,14 +17,15 @@ type ConfigOptions struct {
 func (opts ConfigOptions) GetName() string { return "config" }
 
 func (opts ConfigOptions) Help() api.Text {
-	return clicky.Text(`Show the merged repomap configuration.
+	return clicky.Text(`Display the effective repomap configuration.
 
-Displays the effective configuration after merging user-defined
-repomap.yaml rules with embedded defaults.
+Shows the merged result of user-defined repomap.yaml and embedded
+defaults, including scope rules, git settings, and severity rules.
+Useful for debugging why files are classified a certain way.
 
 EXAMPLES:
-  repomap config
-  repomap config --path ./my-repo`)
+  repomap config                  # show config for current directory
+  repomap config --path ./my-repo # show config for a specific repo`)
 }
 
 type ConfigView struct {
@@ -45,7 +46,8 @@ func (v ConfigView) Pretty() api.Text {
 }
 
 func init() {
-	clicky.AddCommand(rootCmd, ConfigOptions{}, runConfig)
+	cmd := clicky.AddCommand(rootCmd, ConfigOptions{}, runConfig)
+	cmd.Short = "Display effective repomap configuration"
 }
 
 func runConfig(opts ConfigOptions) (any, error) {

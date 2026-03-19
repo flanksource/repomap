@@ -36,33 +36,49 @@ func (s Scopes) ToString() []string {
 	return result
 }
 
+func (s Scopes) Merge(other Scopes) Scopes {
+	seen := make(map[ScopeType]bool, len(s))
+	for _, sc := range s {
+		seen[sc] = true
+	}
+	merged := make(Scopes, len(s))
+	copy(merged, s)
+	for _, sc := range other {
+		if !seen[sc] {
+			seen[sc] = true
+			merged = append(merged, sc)
+		}
+	}
+	return merged
+}
+
 type ScopeType string
 
 const (
-	ScopeTypeDocs            ScopeType = "docs"
-	ScopeTypeGeneral         ScopeType = "general"
-	ScopeTypeCI              ScopeType = "ci"
-	ScopeTypeMicroservices   ScopeType = "microservices"
-	ScopeTypeObservability   ScopeType = "observability"
-	ScopeTypeNetworking      ScopeType = "networking"
-	ScopeTypeSecurity        ScopeType = "security"
-	ScopeTypeDatabase        ScopeType = "database"
-	ScopeTypeInfrastructure  ScopeType = "infrastructure"
-	ScopeTypeIaC             ScopeType = "iac"
-	ScopeTypeApp             ScopeType = "app"
-	ScopeTypeDeployment      ScopeType = "deployment"
-	ScopeTypeCD              = ScopeTypeDeployment
-	ScopeTypeScaling         ScopeType = "scaling"
-	ScopeTypeTest            ScopeType = "test"
-	ScopeTypeReliability     ScopeType = "reliability"
-	ScopeTypePerformance     ScopeType = "performance"
+	ScopeTypeDocs             ScopeType = "docs"
+	ScopeTypeGeneral          ScopeType = "general"
+	ScopeTypeCI               ScopeType = "ci"
+	ScopeTypeMicroservices    ScopeType = "microservices"
+	ScopeTypeObservability    ScopeType = "observability"
+	ScopeTypeNetworking       ScopeType = "networking"
+	ScopeTypeSecurity         ScopeType = "security"
+	ScopeTypeDatabase         ScopeType = "database"
+	ScopeTypeInfrastructure   ScopeType = "infrastructure"
+	ScopeTypeIaC              ScopeType = "iac"
+	ScopeTypeApp              ScopeType = "app"
+	ScopeTypeDeployment       ScopeType = "deployment"
+	ScopeTypeCD                         = ScopeTypeDeployment
+	ScopeTypeScaling          ScopeType = "scaling"
+	ScopeTypeTest             ScopeType = "test"
+	ScopeTypeReliability      ScopeType = "reliability"
+	ScopeTypePerformance      ScopeType = "performance"
 	ScopeTypeCostOptimization ScopeType = "cost_optimization"
-	ScopeTypeSecrets         ScopeType = "secrets"
-	ScopeTypeConfig          ScopeType = "config"
-	ScopeTypeDependency      ScopeType = "dependency"
-	ScopeTypeML              ScopeType = "ml"
-	ScopeTypeOther           ScopeType = "other"
-	ScopeTypeUnknown         ScopeType = ""
+	ScopeTypeSecrets          ScopeType = "secrets"
+	ScopeTypeConfig           ScopeType = "config"
+	ScopeTypeDependency       ScopeType = "dependency"
+	ScopeTypeML               ScopeType = "ml"
+	ScopeTypeOther            ScopeType = "other"
+	ScopeTypeUnknown          ScopeType = ""
 )
 
 func (s ScopeType) Pretty() api.Text {

@@ -6,8 +6,8 @@ import (
 
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api"
-	celengine "github.com/flanksource/repomap/cel"
 	"github.com/flanksource/repomap"
+	celengine "github.com/flanksource/repomap/cel"
 	"github.com/ghodss/yaml"
 )
 
@@ -20,20 +20,23 @@ type EvalOptions struct {
 func (opts EvalOptions) GetName() string { return "eval" }
 
 func (opts EvalOptions) Help() api.Text {
-	return clicky.Text(`Evaluate CEL expressions against a sample context.
+	return clicky.Text(`Evaluate CEL expressions against a sample context for testing
+severity rules.
 
-Tests CEL expressions or severity rules from a file. Useful for
-developing and debugging severity rules in repomap.yaml.
+Tests inline CEL expressions or rules from a YAML file against a
+sample commit/change/kubernetes/file context. Useful for developing
+and debugging severity rules before adding them to repomap.yaml.
 
 EXAMPLES:
   repomap eval --expr 'change.type == "deleted"'
-  repomap eval --file rules.yaml
-  repomap eval --expr 'kubernetes.kind == "Secret"'`)
+  repomap eval --expr 'kubernetes.kind == "Secret"'
+  repomap eval --expr 'commit.line_changes > 500'
+  repomap eval --file rules.yaml`)
 }
 
 type EvalResult struct {
-	Expression string          `json:"expression"`
-	Result     bool            `json:"result"`
+	Expression string           `json:"expression"`
+	Result     bool             `json:"result"`
 	Severity   repomap.Severity `json:"severity,omitempty"`
 }
 
@@ -52,7 +55,8 @@ func (r EvalResult) Pretty() api.Text {
 }
 
 func init() {
-	clicky.AddCommand(rootCmd, EvalOptions{}, runEval)
+	cmd := clicky.AddCommand(rootCmd, EvalOptions{}, runEval)
+	cmd.Short = "Evaluate CEL expressions against sample context"
 }
 
 func runEval(opts EvalOptions) (any, error) {

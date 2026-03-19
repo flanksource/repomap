@@ -3,8 +3,8 @@
 build:
 	go build -o .bin/repomap ./cmd/repomap
 
-install:
-	go install ./cmd/repomap
+install: build
+	cp .bin/repomap /usr/local/bin/
 
 test:
 	go test ./...

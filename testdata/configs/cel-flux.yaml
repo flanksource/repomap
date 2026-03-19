@@ -1,0 +1,4 @@
+scopes:
+  rules:
+    flux:
+      - when: 'kubernetes.api_version.startsWith("source.toolkit.fluxcd.io")'

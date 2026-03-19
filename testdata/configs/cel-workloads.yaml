@@ -1,0 +1,4 @@
+scopes:
+  rules:
+    workloads:
+      - when: 'kubernetes.kind == "Deployment" || kubernetes.kind == "StatefulSet"'

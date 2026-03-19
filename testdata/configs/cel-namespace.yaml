@@ -1,0 +1,4 @@
+scopes:
+  rules:
+    critical:
+      - when: 'kubernetes.namespace == "production" && kubernetes.kind == "Deployment"'

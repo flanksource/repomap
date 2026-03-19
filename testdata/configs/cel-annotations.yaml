@@ -1,0 +1,4 @@
+scopes:
+  rules:
+    managed:
+      - when: 'kubernetes.annotations.managed_by == "terraform"'

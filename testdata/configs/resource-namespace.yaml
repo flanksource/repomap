@@ -1,0 +1,4 @@
+scopes:
+  rules:
+    infrastructure:
+      - namespace: "kube-system"

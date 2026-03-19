@@ -77,14 +77,30 @@ func (f FileMap) GetChildren() []api.TreeNode {
 	for _, ref := range f.KubernetesRefs {
 		children = append(children, k8sRefNode{ref})
 	}
+	for _, match := range f.ScopeMatches {
+		children = append(children, scopeMatchNode{match})
+	}
 	return children
 }
+
+type scopeMatchNode struct {
+	ScopeMatch
+}
+
+func (n scopeMatchNode) Pretty() api.Text {
+	return clicky.Text("").
+		Add(ScopeType(n.Scope).Pretty()).Space().
+		Append(n.Scope, "font-bold").
+		Append(" ← ", "text-muted").
+		Append(n.Rule, "text-muted")
+}
+func (n scopeMatchNode) GetChildren() []api.TreeNode { return nil }
 
 type k8sRefNode struct {
 	kubernetes.KubernetesRef
 }
 
-func (n k8sRefNode) Pretty() api.Text      { return n.KubernetesRef.Pretty() }
+func (n k8sRefNode) Pretty() api.Text            { return n.KubernetesRef.Pretty() }
 func (n k8sRefNode) GetChildren() []api.TreeNode { return nil }
 
 func getFileIcon(path string) icons.Icon {

@@ -21,6 +21,11 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "repomap",
 	Short: "Repository structure analysis and mapping",
+	Long: `Repomap analyzes repository structure, classifying files by language,
+scope, and technology. It parses Kubernetes YAML manifests, detects
+version changes, and evaluates configurable severity rules using CEL.
+
+When run without a subcommand, defaults to 'scan'.`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		clicky.Flags.UseFlags()
 	},
@@ -33,7 +38,7 @@ func init() {
 
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "version",
-		Short: "Print version information",
+		Short: "Print version, commit hash, build date, and Go version",
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Printf("repomap %s (commit: %s, built: %s, go: %s)\n",
 				version, commit, date, runtime.Version())
@@ -47,8 +52,10 @@ func main() {
 	// Default to scan when no subcommand is given
 	if args := os.Args[1:]; len(args) == 0 || args[0] == "" || args[0][0] == '-' {
 		rootCmd.SetArgs(append([]string{"scan"}, args...))
-	} else if cmd, _, _ := rootCmd.Find(args); cmd == rootCmd {
-		rootCmd.SetArgs(append([]string{"scan"}, args...))
+	} else if args[0] != "help" && args[0] != "completion" {
+		if cmd, _, _ := rootCmd.Find(args); cmd == rootCmd {
+			rootCmd.SetArgs(append([]string{"scan"}, args...))
+		}
 	}
 
 	if err := rootCmd.Execute(); err != nil {

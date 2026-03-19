@@ -19,12 +19,15 @@ import (
 var defaultArchYAML string
 
 type ArchConf struct {
-	Git      GitConfig      `json:"git,omitempty" yaml:"git,omitempty"`
-	Build    BuildConfig    `json:"build,omitempty" yaml:"build,omitempty"`
-	Golang   GolangConfig   `json:"golang,omitempty" yaml:"golang,omitempty"`
-	Scopes   ScopesConfig   `json:"scopes,omitempty" yaml:"scopes,omitempty"`
-	Severity SeverityConfig `json:"severity,omitempty" yaml:"severity,omitempty"`
-	repoPath string         `json:"-" yaml:"-"`
+	Git      GitConfig         `json:"git,omitempty" yaml:"git,omitempty"`
+	Build    BuildConfig       `json:"build,omitempty" yaml:"build,omitempty"`
+	Golang   GolangConfig      `json:"golang,omitempty" yaml:"golang,omitempty"`
+	Scopes   ScopesConfig      `json:"scopes,omitempty" yaml:"scopes,omitempty"`
+	Severity SeverityConfig    `json:"severity,omitempty" yaml:"severity,omitempty"`
+	Extends  []string          `json:"extends,omitempty" yaml:"extends,omitempty"`
+	Presets  map[string]Preset `json:"presets,omitempty" yaml:"presets,omitempty"`
+	Exclude  ExcludeConfig     `json:"exclude,omitempty" yaml:"exclude,omitempty"`
+	repoPath string            `json:"-" yaml:"-"`
 }
 
 func (conf *ArchConf) GetFileMap(path string, commit string) (*FileMap, error) {
@@ -33,22 +36,24 @@ func (conf *ArchConf) GetFileMap(path string, commit string) (*FileMap, error) {
 		Language: DetectLanguage(path),
 	}
 
-	f.Scopes = conf.Scopes.GetScopesByPath(path)
+	pathScopes, pathMatches := conf.Scopes.GetScopesByPath(path)
+	f.Scopes = pathScopes
+	f.ScopeMatches = pathMatches
 
 	if kubernetes.IsYaml(path) {
-		if !conf.FileExistsAtCommit(path, commit) {
-			return &f, nil
-		}
-
-		content, err := conf.ReadFile(path, commit)
+		content, err := conf.ReadFileWithFallback(path, commit)
 		if err != nil {
 			logger.Errorf("Error reading file path=%s commit=%s: %v", path, commit, err)
 			return &f, nil
 		}
-
-		f.KubernetesRefs, err = kubernetes.ExtractKubernetesRefsFromContent(content)
-		if err != nil {
-			logger.Errorf("Error extracting k8s refs path=%s commit=%s: %v", path, commit, err)
+		if content != "" {
+			f.KubernetesRefs, err = kubernetes.ExtractKubernetesRefsFromContent(content)
+			if err != nil {
+				logger.Errorf("Error extracting k8s refs path=%s commit=%s: %v", path, commit, err)
+			}
+			refScopes, refMatches := conf.Scopes.GetScopesByRefs(f.KubernetesRefs)
+			f.Scopes = f.Scopes.Merge(refScopes)
+			f.ScopeMatches = append(f.ScopeMatches, refMatches...)
 		}
 	}
 
@@ -97,7 +102,10 @@ func GetFileMap(path string, commit string) (*FileMap, error) {
 		return nil, oops.Wrapf(err, "failed to load embedded defaults")
 	}
 
-	conf := defaultConf.Merge(userConf)
+	conf, err := defaultConf.Merge(userConf)
+	if err != nil {
+		return nil, oops.Wrapf(err, "failed to merge configs")
+	}
 
 	repoPath := FindGitRoot(path)
 	if repoPath == "" {
@@ -119,7 +127,10 @@ func GetConf(path string) (*ArchConf, error) {
 		return nil, oops.Wrapf(err, "failed to load embedded defaults")
 	}
 
-	conf := defaultConf.Merge(userConf)
+	conf, err := defaultConf.Merge(userConf)
+	if err != nil {
+		return nil, oops.Wrapf(err, "failed to merge configs")
+	}
 
 	repoPath := FindGitRoot(path)
 	if repoPath == "" {
@@ -130,26 +141,36 @@ func GetConf(path string) (*ArchConf, error) {
 	return &conf, nil
 }
 
+var ConfigAliases = []string{
+	"repomap.yaml", "repomap.yml",
+	".gavel.yaml", ".gavel.yml",
+	".gitanalyze.yaml", ".gitanalyze.yml",
+	"arch.yaml", "arch.yml",
+	".arch-unit.yaml", ".arch-unit.yml",
+}
+
 func GetConfForFile(path string) (*ArchConf, error) {
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
 		path = filepath.Dir(path)
 	}
 
 	path, _ = filepath.Abs(path)
-	file := filepath.Join(path, "repomap.yaml")
-	if stat, err := os.Stat(file); os.IsNotExist(err) {
-		if IsGitRoot(path) {
-			return nil, nil
+
+	for _, alias := range ConfigAliases {
+		file := filepath.Join(path, alias)
+		if stat, err := os.Stat(file); err == nil && !stat.IsDir() {
+			return LoadArchConf(file)
 		}
-		parent := filepath.Dir(path)
-		if parent == path {
-			return nil, nil
-		}
-		return GetConfForFile(parent)
-	} else if err == nil && !stat.IsDir() {
-		return LoadArchConf(file)
 	}
-	return nil, nil
+
+	if IsGitRoot(path) {
+		return nil, nil
+	}
+	parent := filepath.Dir(path)
+	if parent == path {
+		return nil, nil
+	}
+	return GetConfForFile(parent)
 }
 
 func LoadArchConf(path string) (*ArchConf, error) {
@@ -179,12 +200,15 @@ func LoadDefaultArchConf() (*ArchConf, error) {
 	if err := yaml.Unmarshal([]byte(defaultArchYAML), &conf); err != nil {
 		return nil, oops.Wrapf(err, "failed to unmarshal embedded defaults.yaml")
 	}
+	if err := conf.Scopes.Validate(); err != nil {
+		return nil, oops.Wrapf(err, "failed to validate embedded defaults")
+	}
 	return &conf, nil
 }
 
-func (defaultConf ArchConf) Merge(userConf *ArchConf) ArchConf {
+func (defaultConf ArchConf) Merge(userConf *ArchConf) (ArchConf, error) {
 	if userConf == nil {
-		return defaultConf
+		return defaultConf, nil
 	}
 
 	merged := ArchConf{
@@ -195,9 +219,28 @@ func (defaultConf ArchConf) Merge(userConf *ArchConf) ArchConf {
 			AllowedScopes: userConf.Scopes.AllowedScopes,
 			Rules:         make(PathRules),
 		},
+		Extends: userConf.Extends,
+		Exclude: defaultConf.Exclude.Merge(userConf.Exclude),
 	}
 
 	merged.repoPath = lo.CoalesceOrEmpty(userConf.repoPath, defaultConf.repoPath)
+
+	// Merge presets: default presets first, user overrides
+	merged.Presets = make(map[string]Preset)
+	for name, preset := range defaultConf.Presets {
+		merged.Presets[name] = preset
+	}
+	for name, preset := range userConf.Presets {
+		merged.Presets[name] = preset
+	}
+
+	// If user didn't specify extends, use defaults
+	if len(merged.Extends) == 0 {
+		merged.Extends = defaultConf.Extends
+	}
+
+	// Resolve presets into exclude config
+	merged.Exclude.ResolvePresets(merged.Extends, merged.Presets)
 
 	for scope, rules := range userConf.Scopes.Rules {
 		merged.Scopes.Rules[scope] = rules
@@ -210,7 +253,11 @@ func (defaultConf ArchConf) Merge(userConf *ArchConf) ArchConf {
 		}
 	}
 
-	return merged
+	if err := merged.Scopes.Validate(); err != nil {
+		return merged, err
+	}
+
+	return merged, nil
 }
 
 func (conf *ArchConf) RepoPath() string {
@@ -228,6 +275,20 @@ func (conf *ArchConf) FileExistsAtCommit(path string, commit string) bool {
 	git := conf.Exec()
 	_, err := git("cat-file", "-e", fmt.Sprintf("%s:%s", commit, path))
 	return err == nil
+}
+
+func (conf *ArchConf) ReadFileWithFallback(path string, commit string) (string, error) {
+	if conf.FileExistsAtCommit(path, commit) {
+		return conf.ReadFile(path, commit)
+	}
+	if conf.repoPath != "" {
+		data, err := os.ReadFile(filepath.Join(conf.repoPath, path))
+		if err != nil {
+			return "", nil
+		}
+		return string(data), nil
+	}
+	return "", nil
 }
 
 func (conf *ArchConf) ReadFile(path string, commit string) (string, error) {
