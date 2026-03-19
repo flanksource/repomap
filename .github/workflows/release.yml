@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install svu
+        run: go install github.com/caarlos0/svu@latest
+
+      - name: Determine next version
+        id: version
+        run: |
+          CURRENT=$(svu current)
+          NEXT=$(svu next)
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+          if [ "$CURRENT" = "$NEXT" ]; then
+            echo "bump=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "bump=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tag
+        if: steps.version.outputs.bump == 'true'
+        run: |
+          git tag ${{ steps.version.outputs.next }}
+          git push origin ${{ steps.version.outputs.next }}
+
+      - name: Build binaries
+        if: steps.version.outputs.bump == 'true'
+        run: |
+          VERSION=${{ steps.version.outputs.next }}
+          LDFLAGS="-s -w -X main.version=${VERSION}"
+          for GOOS in linux darwin; do
+            for GOARCH in amd64 arm64; do
+              output="repomap-${GOOS}-${GOARCH}"
+              if [ "$GOOS" = "windows" ]; then output="${output}.exe"; fi
+              GOOS=$GOOS GOARCH=$GOARCH go build -ldflags "$LDFLAGS" -o "dist/${output}" ./cmd/repomap
+            done
+          done
+          cd dist && sha256sum * > checksums.txt
+
+      - name: Create GitHub release
+        if: steps.version.outputs.bump == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ steps.version.outputs.next }} \
+            --generate-notes \
+            dist/*
