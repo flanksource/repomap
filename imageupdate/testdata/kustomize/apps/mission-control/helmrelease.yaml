@@ -1,0 +1,12 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: mission-control-app
+spec:
+  chart:
+    spec:
+      chart: mission-control
+      version: 1.2.0
+      sourceRef:
+        kind: HelmRepository
+        name: flanksource-ecr

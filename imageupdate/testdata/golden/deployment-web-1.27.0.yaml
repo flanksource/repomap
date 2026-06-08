@@ -1,0 +1,14 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: default
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27.0 # pin nginx
+        - name: sidecar
+          image: ghcr.io/flanksource/proxy:v0.4.1

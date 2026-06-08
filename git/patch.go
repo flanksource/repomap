@@ -62,7 +62,7 @@ func ParsePatch(patch string) ([]repomap.CommitChange, error) {
 			parts := strings.Fields(line)
 			if len(parts) >= 3 {
 				newRange := strings.TrimPrefix(parts[2], "+")
-				fmt.Sscanf(newRange, "%d", &currentLine)
+				_, _ = fmt.Sscanf(newRange, "%d", &currentLine)
 			}
 		} else if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
 			adds++

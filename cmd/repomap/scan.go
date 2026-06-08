@@ -13,11 +13,15 @@ import (
 )
 
 type ScanOptions struct {
-	Path    string `json:"path" args:"true" help:"Path to scan"`
-	Commit  string `json:"commit" flag:"commit" help:"Git commit to scan at" default:"HEAD"`
-	All     bool   `json:"all" flag:"all" help:"Show all files including those with no scopes"`
-	Flat    bool   `json:"flat" flag:"flat" help:"Output flat list instead of tree"`
-	Verbose bool   `json:"verbose" flag:"verbose" help:"Show scope rules that matched each file"`
+	Path      string   `json:"path" args:"true" help:"Path to scan"`
+	Commit    string   `json:"commit" flag:"commit" help:"Git commit to scan at" default:"HEAD"`
+	All       bool     `json:"all" flag:"all" help:"Show all files including those with no scopes"`
+	Flat      bool     `json:"flat" flag:"flat" help:"Output flat list instead of tree"`
+	Verbose   bool     `json:"verbose" flag:"verbose" help:"Show scope rules that matched each file"`
+	Kind      []string `json:"kind" flag:"kind,k" help:"Filter Kubernetes refs by kind (MatchItem syntax, comma-separated)"`
+	Namespace []string `json:"namespace" flag:"namespace,n" help:"Filter Kubernetes refs by namespace (MatchItem syntax, comma-separated)"`
+	Name      []string `json:"name" flag:"name" help:"Filter Kubernetes refs by name (MatchItem syntax, comma-separated)"`
+	Selector  []string `json:"selector" flag:"selector,l" help:"Filter Kubernetes refs by label selector, e.g. app=nginx (comma-separated)"`
 }
 
 func (opts ScanOptions) GetName() string { return "scan" }
@@ -35,6 +39,10 @@ EXAMPLES:
   repomap scan ./my-repo        # scan a specific path
   repomap scan --all            # include unclassified files
   repomap scan --flat           # flat table output
+  repomap scan -n kube-system   # only files with refs in kube-system
+  repomap scan -k Deployment    # only files with Deployment refs
+  repomap scan --name 'api-*'   # refs whose name matches a glob
+  repomap scan -l app=nginx     # refs with label app=nginx
   repomap scan --format json    # JSON output`)
 }
 
@@ -68,6 +76,8 @@ func runScan(opts ScanOptions) (any, error) {
 		return nil, fmt.Errorf("failed to list files: %w", err)
 	}
 
+	matcher := repomap.NewResourceMatcher(opts.Kind, opts.Namespace, opts.Name, opts.Selector)
+
 	var results []repomap.FileMap
 	for _, f := range files {
 		relPath := f
@@ -85,6 +95,10 @@ func runScan(opts ScanOptions) (any, error) {
 		if !opts.All && fm.IsEmpty() {
 			continue
 		}
+		if !matcher.MatchesFile(*fm) {
+			continue
+		}
+		fm.KubernetesRefs = matcher.FilterRefs(fm.KubernetesRefs)
 		if !opts.Verbose {
 			fm.ScopeMatches = nil
 		}

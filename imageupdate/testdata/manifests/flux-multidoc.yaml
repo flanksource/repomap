@@ -1,0 +1,29 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: infrastructure
+  namespace: flux-system
+spec:
+  url: https://example.com/infra
+---
+# apiVersion: notification.toolkit.fluxcd.io/v1beta1
+# kind: Alert
+# metadata:
+#   name: infrastructure
+#   namespace: flux-system
+# spec:
+#   eventSeverity: info
+# ---
+# apiVersion: notification.toolkit.fluxcd.io/v1beta1
+# kind: Provider
+# metadata:
+#   name: ado
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: flanksource-ecr
+  namespace: flux-system
+spec:
+  type: oci
+  url: oci://public.ecr.aws/flanksource

@@ -6,7 +6,6 @@ import (
 	"github.com/flanksource/repomap"
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
-	"github.com/google/cel-go/common/types/ref"
 )
 
 type Engine struct {
@@ -108,16 +107,11 @@ func (e *Engine) TestExpression(expr string, ctx map[string]any) (bool, error) {
 		return false, fmt.Errorf("evaluation error: %w", err)
 	}
 
-	boolVal, ok := result.(ref.Val)
-	if !ok {
-		return false, fmt.Errorf("expression did not return a boolean value")
+	if result.Type().TypeName() != "bool" {
+		return false, fmt.Errorf("expression returned %s, expected bool", result.Type().TypeName())
 	}
 
-	if boolVal.Type().TypeName() != "bool" {
-		return false, fmt.Errorf("expression returned %s, expected bool", boolVal.Type().TypeName())
-	}
-
-	return boolVal.Equal(types.True) == types.True, nil
+	return result.Equal(types.True) == types.True, nil
 }
 
 func (e *Engine) GetConfig() *repomap.SeverityConfig {
