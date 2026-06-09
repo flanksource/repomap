@@ -151,7 +151,8 @@ func resolveConcurrently(ctx context.Context, resolver *imageupdate.Resolver, co
 	group := task.StartGroup[int]("Resolving image versions", task.WithConcurrency(resolveConcurrency))
 	for i, t := range targets {
 		idx, target := i, t
-		group.Add(taskName(target), func(ctx flanksourceContext.Context, tk *task.Task) (int, error) {
+		displayFile := displayPathForRepoFile(conf, target.File)
+		group.Add(taskName(target, displayFile), func(ctx flanksourceContext.Context, tk *task.Task) (int, error) {
 			newValue, skipped, err := resolveNewValue(ctx, resolver, target, opts, tk)
 			results[idx] = resolved{newValue, skipped, err}
 			return idx, nil
@@ -203,7 +204,7 @@ func applyResolved(conf *repomap.ArchConf, t imageupdate.UpdateTarget, newValue,
 	plan := UpdatePlan{
 		Ref:      t.Ref,
 		Kind:     t.Kind,
-		File:     t.File,
+		File:     displayPathForRepoFile(conf, t.File),
 		Field:    t.FieldJSONPath,
 		OldValue: t.CurrentValue,
 		DryRun:   opts.DryRun,

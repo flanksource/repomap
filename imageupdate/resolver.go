@@ -40,6 +40,13 @@ type versionsResult struct {
 	err      error
 }
 
+// LatestVersions is the newest stable and pre-release semver version published
+// by a target source. Empty fields mean that class was not present.
+type LatestVersions struct {
+	Stable     string
+	Prerelease string
+}
+
 // NewResolver returns a Resolver wired to live registry-scanner and HTTP Helm
 // index clients, authenticating against the local Docker credential store.
 func NewResolver() *Resolver {
@@ -94,18 +101,25 @@ func (r *Resolver) Available(ctx context.Context, t UpdateTarget) ([]string, err
 
 // ResolveLatest returns the highest stable (non-prerelease) version for a target.
 func (r *Resolver) ResolveLatest(ctx context.Context, t UpdateTarget) (string, error) {
-	if t.Kind == TargetImage || (t.Kind == TargetChart && t.IsOCI) {
-		return r.latestImageTag(ctx, t)
-	}
-	versions, err := r.sourceVersions(ctx, t)
+	latest, err := r.ResolveLatestVersions(ctx, t)
 	if err != nil {
 		return "", err
 	}
-	sorted := sortSemverDesc(filterStable(versions))
-	if len(sorted) == 0 {
-		return "", fmt.Errorf("no stable version found for chart %q in %s", t.ChartName, t.RepoURL)
+	if latest.Stable == "" {
+		return "", fmt.Errorf("no stable version found for %s", targetVersionSource(t))
 	}
-	return sorted[0], nil
+	return latest.Stable, nil
+}
+
+// ResolveLatestVersions returns both the highest stable and highest pre-release
+// semver versions for a target. It uses the shared source version cache, so a
+// caller can ask for both classes without a second registry or Helm lookup.
+func (r *Resolver) ResolveLatestVersions(ctx context.Context, t UpdateTarget) (LatestVersions, error) {
+	versions, err := r.sourceVersions(ctx, t)
+	if err != nil {
+		return LatestVersions{}, err
+	}
+	return latestSemverVersions(versions), nil
 }
 
 // sourceVersionKey identifies the upstream a target's versions come from, so two
@@ -179,30 +193,6 @@ func registryImage(t UpdateTarget) *image.ContainerImage {
 	return image.NewFromIdentifier(t.CurrentValue)
 }
 
-func (r *Resolver) latestImageTag(ctx context.Context, t UpdateTarget) (string, error) {
-	tags, err := r.sourceVersions(ctx, t)
-	if err != nil {
-		return "", err
-	}
-	tagList := tag.NewImageTagList()
-	for _, name := range filterStable(tags) {
-		tagList.Add(tag.NewImageTag(name, time.Time{}, ""))
-	}
-	vc := image.NewVersionConstraint()
-	vc.Strategy = image.StrategySemVer
-	vc.Options = options.NewManifestOptions()
-
-	img := registryImage(t)
-	newest, err := img.GetNewestVersionFromTags(ctx, vc, tagList)
-	if err != nil {
-		return "", err
-	}
-	if newest == nil {
-		return "", fmt.Errorf("no semver-matching tag found for image %s", img.GetFullNameWithoutTag())
-	}
-	return newest.TagName, nil
-}
-
 // NewImageValue composes the replacement string for an image target updated to
 // newTag. When the current image is digest-pinned, the re-resolve policy fetches
 // newTag's digest and writes repo:newtag@sha256:<new>; otherwise it writes
@@ -269,16 +259,30 @@ func sortSemverDesc(versions []string) []string {
 	return out
 }
 
-func filterStable(versions []string) []string {
-	var out []string
-	for _, v := range versions {
+func latestSemverVersions(versions []string) LatestVersions {
+	var latest LatestVersions
+	for _, v := range sortSemverDesc(versions) {
 		sv, err := semver.NewVersion(v)
 		if err != nil {
 			continue
 		}
 		if strings.TrimSpace(sv.Prerelease()) == "" {
-			out = append(out, v)
+			if latest.Stable == "" {
+				latest.Stable = v
+			}
+		} else if latest.Prerelease == "" {
+			latest.Prerelease = v
+		}
+		if latest.Stable != "" && latest.Prerelease != "" {
+			return latest
 		}
 	}
-	return out
+	return latest
+}
+
+func targetVersionSource(t UpdateTarget) string {
+	if t.Kind == TargetChart && !t.IsOCI {
+		return fmt.Sprintf("chart %q in %s", t.ChartName, t.RepoURL)
+	}
+	return fmt.Sprintf("image %s", registryImage(t).GetFullNameWithoutTag())
 }
