@@ -32,7 +32,7 @@ When run without a subcommand, defaults to 'scan'.`,
 }
 
 func init() {
-	clicky.BindAllFlags(rootCmd.PersistentFlags(), "format")
+	clicky.BindAllFlags(rootCmd.PersistentFlags(), "tasks", "format")
 	logger.Configure(logger.Flags{LogToStderr: true, Color: true})
 	rootCmd.PersistentFlags().StringVar(&workingDir, "cwd", "", "Working directory")
 
