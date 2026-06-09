@@ -208,6 +208,10 @@ func managerStyle(manager Manager) string {
 		return "font-bold text-purple-600"
 	case ManagerGradle:
 		return "font-bold text-green-600"
+	case ManagerImage:
+		return "font-bold text-blue-600"
+	case ManagerHelm:
+		return "font-bold text-indigo-600"
 	default:
 		return "font-bold text-muted"
 	}

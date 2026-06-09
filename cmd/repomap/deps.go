@@ -20,7 +20,16 @@ type DepsOptions struct {
 	Strict        bool     `json:"strict,omitempty" flag:"strict" help:"Fail if native resolution is unavailable or fallback resolution is degraded"`
 }
 
+type DepsUpdateOptions struct {
+	Args    []string `json:"args" args:"true" required:"true" help:"Dependency MatchItem expression followed by optional path"`
+	Manager []string `json:"manager,omitempty" flag:"manager" help:"Dependency manager to update: go, npm, pnpm, image/docker, helm (repeatable or comma-separated)"`
+	Check   bool     `json:"check" flag:"check" help:"Resolve and list available updates without prompting or writing"`
+	DryRun  bool     `json:"dry_run" flag:"dry-run" help:"Show planned dependency updates without running package-manager commands"`
+}
+
 func (opts DepsOptions) GetName() string { return "deps" }
+
+func (opts DepsUpdateOptions) GetName() string { return "update <expr> [path]" }
 
 func (opts DepsOptions) Help() api.Text {
 	return clicky.Text(`Generate dependency graphs for Go, Maven, Gradle, npm, and pnpm projects.
@@ -42,9 +51,33 @@ EXAMPLES:
   repomap deps --mode manifest --json > deps.json`)
 }
 
+func (opts DepsUpdateOptions) Help() api.Text {
+	return clicky.Text(`Update direct package, image, and Helm chart dependencies.
+
+The required expr argument uses commons MatchItem syntax and is matched against
+dependency names, manager-qualified names, versions, and scopes. Manifest path
+matching is explicit with path:<pattern> or file:<pattern>. Matched direct
+dependencies are resolved to published versions, then repomap prompts for which
+dependencies and versions to apply.
+
+Use --check to list updateable dependencies without prompting or writing.
+
+EXAMPLES:
+  repomap deps update 'github.com/flanksource/*'
+  repomap deps update '*' --check
+  repomap deps update 'path:apps/*/package.json'
+  repomap deps update 'image:ghcr.io/flanksource/*' --manager image
+  repomap deps update 'helm:mission-control' --manager helm
+  repomap deps update 'npm:@flanksource/*' ./web --manager npm
+  repomap deps update 'left-pad,!*beta*' --dry-run`)
+}
+
 func init() {
 	cmd := clicky.AddNamedCommandWithContext("deps", rootCmd, DepsOptions{}, runDeps)
 	cmd.Short = "Generate dependency graphs for Go, Maven, Gradle, npm, and pnpm projects"
+
+	updateCmd := clicky.AddNamedCommandWithContext("update", cmd, DepsUpdateOptions{}, runDepsUpdate)
+	updateCmd.Short = "Update direct package, image, and Helm chart dependencies"
 }
 
 func runDeps(ctx context.Context, opts DepsOptions) (*depgraph.Export, error) {
@@ -73,6 +106,37 @@ func runDeps(ctx context.Context, opts DepsOptions) (*depgraph.Export, error) {
 	})
 }
 
+func runDepsUpdate(ctx context.Context, opts DepsUpdateOptions) (any, error) {
+	if len(opts.Args) == 0 {
+		return nil, fmt.Errorf("dependency update expression is required")
+	}
+	if len(opts.Args) > 2 {
+		return nil, fmt.Errorf("expected <expr> [path], got %d arguments", len(opts.Args))
+	}
+	path := "."
+	if len(opts.Args) == 2 {
+		path = opts.Args[1]
+	}
+	path, err := resolvePath(path)
+	if err != nil {
+		return nil, err
+	}
+	managers, err := parseUpdateManagers(opts.Manager)
+	if err != nil {
+		return nil, err
+	}
+	plans, err := depgraph.Update(ctx, path, depgraph.UpdateOptions{
+		Managers:   managers,
+		Expression: []string{opts.Args[0]},
+		Check:      opts.Check,
+		DryRun:     opts.DryRun,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return api.NewTableFrom(plans), nil
+}
+
 func parseDepsMode(value string) (depgraph.Mode, error) {
 	switch depgraph.Mode(strings.TrimSpace(value)) {
 	case "", depgraph.ModeAuto:
@@ -99,6 +163,26 @@ func parseManagers(values []string) ([]depgraph.Manager, error) {
 			out = append(out, manager)
 		default:
 			return nil, fmt.Errorf("unsupported dependency manager %q (expected go, maven, gradle, npm, or pnpm)", part)
+		}
+	}
+	return out, nil
+}
+
+func parseUpdateManagers(values []string) ([]depgraph.Manager, error) {
+	parts := splitCommaArgs(values)
+	if len(parts) == 0 {
+		return nil, nil
+	}
+	out := make([]depgraph.Manager, 0, len(parts))
+	for _, part := range parts {
+		manager := depgraph.Manager(strings.ToLower(part))
+		switch manager {
+		case "docker":
+			out = append(out, depgraph.ManagerImage)
+		case depgraph.ManagerGo, depgraph.ManagerNPM, depgraph.ManagerPNPM, depgraph.ManagerImage, depgraph.ManagerHelm:
+			out = append(out, manager)
+		default:
+			return nil, fmt.Errorf("unsupported dependency update manager %q (expected go, npm, pnpm, image/docker, or helm)", part)
 		}
 	}
 	return out, nil

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -33,34 +34,26 @@ func Discover(root string, managers []Manager) ([]Project, []Warning, error) {
 		absRoot = filepath.Dir(absRoot)
 	}
 
+	files, err := discoverManifestFiles(absRoot)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	byDir := map[string]map[string]string{}
-	err = filepath.WalkDir(absRoot, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if path != absRoot && ignoredDirs[d.Name()] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		name := d.Name()
+	for _, path := range files {
+		name := filepath.Base(path)
 		manager := managerForManifest(name)
 		if manager == "" {
-			return nil
+			continue
 		}
 		if len(selected) > 0 && !selected[manager] {
-			return nil
+			continue
 		}
 		dir := filepath.Dir(path)
 		if byDir[dir] == nil {
 			byDir[dir] = map[string]string{}
 		}
 		byDir[dir][name] = path
-		return nil
-	})
-	if err != nil {
-		return nil, nil, err
 	}
 
 	var projects []Project
@@ -117,6 +110,61 @@ func Discover(root string, managers []Manager) ([]Project, []Warning, error) {
 		return nil, warnings, fmt.Errorf("no supported dependency manifests found under %s", absRoot)
 	}
 	return projects, warnings, nil
+}
+
+func discoverManifestFiles(root string) ([]string, error) {
+	if files, ok := gitManifestFiles(root); ok {
+		return files, nil
+	}
+	return walkManifestFiles(root)
+}
+
+func gitManifestFiles(root string) ([]string, bool) {
+	cmd := osexec.Command("git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", ".")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, false
+	}
+	var files []string
+	for _, rel := range strings.Split(string(out), "\x00") {
+		if rel == "" {
+			continue
+		}
+		name := filepath.Base(filepath.FromSlash(rel))
+		if managerForManifest(name) == "" {
+			continue
+		}
+		files = append(files, filepath.Join(root, filepath.FromSlash(rel)))
+	}
+	sort.Strings(files)
+	return files, true
+}
+
+func walkManifestFiles(root string) ([]string, error) {
+	var files []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path != root && ignoredDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		name := d.Name()
+		manager := managerForManifest(name)
+		if manager == "" {
+			return nil
+		}
+		files = append(files, path)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(files)
+	return files, nil
 }
 
 func managerForManifest(name string) Manager {
