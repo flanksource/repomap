@@ -13,11 +13,50 @@ import (
 )
 
 type pnpmNativeNode struct {
-	Name         string           `json:"name"`
-	Version      string           `json:"version"`
-	Path         string           `json:"path"`
-	Private      bool             `json:"private"`
-	Dependencies []pnpmNativeNode `json:"dependencies"`
+	Name         string         `json:"name"`
+	From         string         `json:"from"`
+	Version      string         `json:"version"`
+	Path         string         `json:"path"`
+	Private      bool           `json:"private"`
+	Dependencies pnpmNativeDeps `json:"dependencies"`
+}
+
+type pnpmNativeDeps []pnpmNativeNode
+
+func (d *pnpmNativeDeps) UnmarshalJSON(data []byte) error {
+	if strings.TrimSpace(string(data)) == "null" {
+		*d = nil
+		return nil
+	}
+	var list []pnpmNativeNode
+	if err := json.Unmarshal(data, &list); err == nil {
+		*d = list
+		return nil
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil {
+		return err
+	}
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]pnpmNativeNode, 0, len(keys))
+	for _, key := range keys {
+		var node pnpmNativeNode
+		if err := json.Unmarshal(object[key], &node); err != nil {
+			var version string
+			if err2 := json.Unmarshal(object[key], &version); err2 != nil {
+				return fmt.Errorf("dependency %s: %w", key, err)
+			}
+			node.Version = version
+		}
+		node.Name = firstNonEmpty(node.Name, node.From, key)
+		out = append(out, node)
+	}
+	*d = out
+	return nil
 }
 
 func resolvePNPMNative(ctx context.Context, project Project, opts Options) (*Node, []Warning, error) {

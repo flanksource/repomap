@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -219,6 +220,37 @@ packages:
 	}
 }
 
+func TestDiscoverRespectsGitignore(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init")
+	writeFile(t, filepath.Join(dir, ".gitignore"), `ignored-dir/
+ignored-package.json
+`)
+	writeFile(t, filepath.Join(dir, "go.mod"), `module github.com/acme/app
+
+go 1.22
+`)
+	writeFile(t, filepath.Join(dir, "visible", "package.json"), `{"name":"visible"}`)
+	writeFile(t, filepath.Join(dir, "ignored-dir", "package.json"), `{"name":"ignored-dir"}`)
+	writeFile(t, filepath.Join(dir, "ignored-package.json"), `{"name":"ignored-file"}`)
+
+	projects, _, err := Discover(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := projectFiles(projects)
+	want := []string{
+		filepath.Join(dir, "go.mod"),
+		filepath.Join(dir, "visible", "package.json"),
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("projects:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 func findChild(root *Node, name string) *Node {
 	for _, child := range root.Children {
 		if child.Name == name {
@@ -226,6 +258,23 @@ func findChild(root *Node, name string) *Node {
 		}
 	}
 	return nil
+}
+
+func projectFiles(projects []Project) []string {
+	out := make([]string, 0, len(projects))
+	for _, project := range projects {
+		out = append(out, project.File)
+	}
+	return out
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	}
 }
 
 func treeChildNames(children []api.TreeNode) []string {

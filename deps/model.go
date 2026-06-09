@@ -10,6 +10,8 @@ const (
 	ManagerGradle Manager = "gradle"
 	ManagerNPM    Manager = "npm"
 	ManagerPNPM   Manager = "pnpm"
+	ManagerImage  Manager = "image"
+	ManagerHelm   Manager = "helm"
 )
 
 type Mode string

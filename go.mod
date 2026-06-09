@@ -6,6 +6,7 @@ require (
 	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/argoproj-labs/argocd-image-updater/registry-scanner v1.2.1
 	github.com/bmatcuk/doublestar/v4 v4.10.0
+	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/flanksource/clicky v1.21.14
 	github.com/flanksource/commons v1.51.3
 	github.com/ghodss/yaml v1.0.0
@@ -51,7 +52,6 @@ require (
 	github.com/cert-manager/cert-manager v1.20.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/bubbles v0.21.1-0.20250623103423-23b8fd6302d7 // indirect
-	github.com/charmbracelet/bubbletea v1.3.10 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/huh v1.0.0 // indirect
 	github.com/charmbracelet/lipgloss v1.1.0 // indirect
