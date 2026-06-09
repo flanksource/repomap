@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/clicky/task"
@@ -15,7 +16,7 @@ import (
 
 type ListImagesOptions struct {
 	imageFilterOptions
-	Check bool `json:"check" flag:"check" help:"Resolve the latest available version from the registry/Helm repo"`
+	Check bool `json:"check" flag:"check" help:"Resolve the latest stable and pre-release versions from the registry/Helm repo"`
 }
 
 func (opts ListImagesOptions) GetName() string { return "list" }
@@ -25,13 +26,13 @@ func (opts ListImagesOptions) Help() api.Text {
 
 Discovers apps/v1 workload images and Flux HelmRelease chart versions in
 git-tracked YAML and lists each with its current version, file, and resource.
-Offline by default. With --check, the latest available version is resolved from
-the container registry / Helm repository and an update-available column is shown.
+Offline by default. With --check, the latest stable and pre-release versions are
+resolved from the container registry / Helm repository using semantic versioning.
 
 EXAMPLES:
   repomap images list                  # all images and charts (offline)
   repomap images list -k Deployment    # only Deployment images
-  repomap images list -k HelmRelease --check  # show latest available chart versions`)
+  repomap images list -k HelmRelease --check  # show latest stable and pre-release chart versions`)
 }
 
 func init() {
@@ -39,17 +40,19 @@ func init() {
 	cmd.Short = "List image tags and Helm chart versions in tracked manifests"
 }
 
-// ImageInfo is one discovered image/chart row. When Checked, Latest and
-// UpdateAvailable are populated from the registry/Helm repo.
+// ImageInfo is one discovered image/chart row. When Checked, Latest,
+// LatestPrerelease, and their update flags are populated from the registry/Helm repo.
 type ImageInfo struct {
-	Ref             kubernetes.KubernetesRef `json:"ref"`
-	Kind            imageupdate.TargetKind   `json:"kind"`
-	File            string                   `json:"file"`
-	Current         string                   `json:"current"`
-	Latest          string                   `json:"latest,omitempty"`
-	UpdateAvailable bool                     `json:"update_available"`
-	Checked         bool                     `json:"-"`
-	Error           string                   `json:"error,omitempty"`
+	Ref                       kubernetes.KubernetesRef `json:"ref"`
+	Kind                      imageupdate.TargetKind   `json:"kind"`
+	File                      string                   `json:"file"`
+	Current                   string                   `json:"current"`
+	Latest                    string                   `json:"latest,omitempty"`
+	LatestPrerelease          string                   `json:"latest_prerelease,omitempty"`
+	UpdateAvailable           bool                     `json:"update_available"`
+	PrereleaseUpdateAvailable bool                     `json:"prerelease_update_available"`
+	Checked                   bool                     `json:"-"`
+	Error                     string                   `json:"error,omitempty"`
 }
 
 func (i ImageInfo) Pretty() api.Text {
@@ -69,8 +72,10 @@ func (i ImageInfo) Columns() []api.ColumnDef {
 	}
 	if i.Checked {
 		cols = append(cols,
-			api.Column("latest").Label("Latest").Build(),
-			api.Column("update").Label("Update").Build(),
+			api.Column("latest").Label("Latest Stable").Build(),
+			api.Column("stable_update").Label("Stable Update").Build(),
+			api.Column("latest_prerelease").Label("Latest Pre-release").Build(),
+			api.Column("prerelease_update").Label("Pre-release Update").Build(),
 		)
 	}
 	return cols
@@ -84,23 +89,23 @@ func (i ImageInfo) Row() map[string]any {
 		"current":  clicky.Text(i.Current, "font-mono"),
 	}
 	if i.Checked {
-		switch {
-		case i.Error != "":
+		if i.Error != "" {
 			row["latest"] = clicky.Text(i.Error, "text-red-600")
-			row["update"] = clicky.Text("?", "text-muted")
-		case i.UpdateAvailable:
-			row["latest"] = clicky.Text(i.Latest, "font-mono text-green-600")
-			row["update"] = clicky.Text("✓", "text-green-600")
-		default:
-			row["latest"] = clicky.Text(i.Latest, "font-mono text-muted")
-			row["update"] = clicky.Text("—", "text-muted")
+			row["stable_update"] = clicky.Text("?", "text-muted")
+			row["latest_prerelease"] = clicky.Text(i.Error, "text-red-600")
+			row["prerelease_update"] = clicky.Text("?", "text-muted")
+		} else {
+			row["latest"] = versionCell(i.Latest, i.UpdateAvailable)
+			row["stable_update"] = updateCell(i.UpdateAvailable)
+			row["latest_prerelease"] = versionCell(i.LatestPrerelease, i.PrereleaseUpdateAvailable)
+			row["prerelease_update"] = updateCell(i.PrereleaseUpdateAvailable)
 		}
 	}
 	return row
 }
 
 func runListImages(opts ListImagesOptions) (any, error) {
-	targets, sourceIndex, _, err := discoverAndFilter(opts.imageFilterOptions)
+	targets, sourceIndex, conf, err := discoverAndFilter(opts.imageFilterOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +117,7 @@ func runListImages(opts ListImagesOptions) (any, error) {
 	if opts.Check {
 		resolver = imageupdate.NewResolver()
 	}
-	infos, err := buildImageInfos(context.Background(), resolver, targets, sourceIndex, opts.Check)
+	infos, err := buildImageInfos(context.Background(), resolver, targets, sourceIndex, opts.Check, displayPathFuncForConf(conf))
 	if err != nil {
 		return nil, err
 	}
@@ -123,11 +128,14 @@ func runListImages(opts ListImagesOptions) (any, error) {
 // offline mapping. With --check each target's version lookup runs as its own
 // clicky task (concurrently, with live progress); a per-target resolution error
 // is recorded on the row rather than aborting the whole listing.
-func buildImageInfos(ctx context.Context, resolver *imageupdate.Resolver, targets []imageupdate.UpdateTarget, sourceIndex *imageupdate.SourceIndex, check bool) ([]ImageInfo, error) {
+func buildImageInfos(ctx context.Context, resolver *imageupdate.Resolver, targets []imageupdate.UpdateTarget, sourceIndex *imageupdate.SourceIndex, check bool, displayPath displayPathFunc) ([]ImageInfo, error) {
+	if displayPath == nil {
+		displayPath = func(path string) string { return path }
+	}
 	if !check {
 		infos := make([]ImageInfo, len(targets))
 		for i, t := range targets {
-			infos[i] = baseInfo(t, false)
+			infos[i] = baseInfo(t, false, displayPath(t.File))
 		}
 		return infos, nil
 	}
@@ -136,8 +144,9 @@ func buildImageInfos(ctx context.Context, resolver *imageupdate.Resolver, target
 	group := task.StartGroup[int]("Resolving image versions", task.WithConcurrency(resolveConcurrency))
 	for i, t := range targets {
 		idx, target := i, t
-		group.Add(taskName(target), func(ctx flanksourceContext.Context, tk *task.Task) (int, error) {
-			infos[idx] = checkInfo(ctx, resolver, sourceIndex, target, tk)
+		displayFile := displayPath(target.File)
+		group.Add(taskName(target, displayFile), func(ctx flanksourceContext.Context, tk *task.Task) (int, error) {
+			infos[idx] = checkInfo(ctx, resolver, sourceIndex, target, displayFile, tk)
 			return idx, nil
 		})
 	}
@@ -147,14 +156,15 @@ func buildImageInfos(ctx context.Context, resolver *imageupdate.Resolver, target
 	return infos, nil
 }
 
-func baseInfo(t imageupdate.UpdateTarget, checked bool) ImageInfo {
-	return ImageInfo{Ref: t.Ref, Kind: t.Kind, File: t.File, Current: t.CurrentValue, Checked: checked}
+func baseInfo(t imageupdate.UpdateTarget, checked bool, displayFile string) ImageInfo {
+	return ImageInfo{Ref: t.Ref, Kind: t.Kind, File: displayFile, Current: t.CurrentValue, Checked: checked}
 }
 
-// checkInfo resolves a single target's latest version, recording any failure on
-// the row. Resolution errors do not fail the task — the listing reports them.
-func checkInfo(ctx context.Context, resolver *imageupdate.Resolver, sourceIndex *imageupdate.SourceIndex, t imageupdate.UpdateTarget, tk *task.Task) ImageInfo {
-	info := baseInfo(t, true)
+// checkInfo resolves a single target's latest stable and pre-release versions,
+// recording any failure on the row. Resolution errors do not fail the task; the
+// listing reports them.
+func checkInfo(ctx context.Context, resolver *imageupdate.Resolver, sourceIndex *imageupdate.SourceIndex, t imageupdate.UpdateTarget, displayFile string, tk *task.Task) ImageInfo {
+	info := baseInfo(t, true, displayFile)
 	if t.Kind == imageupdate.TargetChart {
 		if err := sourceIndex.Resolve(&t); err != nil {
 			tk.Warnf("source unresolved: %v", err)
@@ -162,22 +172,69 @@ func checkInfo(ctx context.Context, resolver *imageupdate.Resolver, sourceIndex 
 			return info
 		}
 	}
-	tk.Infof("looking up latest version")
-	latest, err := resolver.ResolveLatest(ctx, t)
+	tk.Infof("looking up latest stable and pre-release versions")
+	latest, err := resolver.ResolveLatestVersions(ctx, t)
 	if err != nil {
 		tk.Errorf("%v", err)
 		info.Error = err.Error()
 		return info
 	}
-	info.Latest = latest
-	info.UpdateAvailable = latest != "" && latest != versionOnly(t.CurrentValue)
+	if latest.Stable == "" && latest.Prerelease == "" {
+		info.Error = fmt.Sprintf("no semver-matching version found for %s", versionSourceLabel(t))
+		tk.Errorf("%s", info.Error)
+		return info
+	}
+	info.Latest = latest.Stable
+	info.LatestPrerelease = latest.Prerelease
+	info.UpdateAvailable = semverUpdateAvailable(t.CurrentValue, info.Latest)
+	info.PrereleaseUpdateAvailable = semverUpdateAvailable(t.CurrentValue, info.LatestPrerelease)
 	return info
+}
+
+func versionCell(version string, update bool) api.Text {
+	if version == "" {
+		return clicky.Text("-", "text-muted")
+	}
+	if update {
+		return clicky.Text(version, "font-mono text-green-600")
+	}
+	return clicky.Text(version, "font-mono text-muted")
+}
+
+func updateCell(update bool) api.Text {
+	if update {
+		return clicky.Text("✓", "text-green-600")
+	}
+	return clicky.Text("—", "text-muted")
+}
+
+func semverUpdateAvailable(currentValue, latest string) bool {
+	if latest == "" {
+		return false
+	}
+	current := versionOnly(currentValue)
+	currentSemver, currentErr := semver.NewVersion(current)
+	latestSemver, latestErr := semver.NewVersion(latest)
+	if currentErr != nil || latestErr != nil {
+		return latest != current
+	}
+	return latestSemver.GreaterThan(currentSemver)
+}
+
+func versionSourceLabel(t imageupdate.UpdateTarget) string {
+	if t.Kind == imageupdate.TargetChart && !t.IsOCI {
+		return fmt.Sprintf("chart %q in %s", t.ChartName, t.RepoURL)
+	}
+	if t.Kind == imageupdate.TargetImage && t.Image != nil {
+		return fmt.Sprintf("image %s", t.Image.GetFullNameWithoutTag())
+	}
+	return fmt.Sprintf("%s %q", t.Kind, t.CurrentValue)
 }
 
 // taskName builds a descriptive, unique label for a target's resolution task:
 // the chart/image, the file it lives in, and the namespace when one is known
 // (the namespace is often imposed by Flux/kustomize and left empty in the file).
-func taskName(t imageupdate.UpdateTarget) string {
+func taskName(t imageupdate.UpdateTarget, displayFile string) string {
 	var subject string
 	if t.Kind == imageupdate.TargetChart {
 		subject = "chart " + t.ChartName
@@ -187,7 +244,10 @@ func taskName(t imageupdate.UpdateTarget) string {
 			subject += " [" + t.ContainerName + "]"
 		}
 	}
-	subject += " in " + t.File
+	if displayFile == "" {
+		displayFile = t.File
+	}
+	subject += " in " + displayFile
 	if ns := targetNamespace(t); ns != "" {
 		subject += " (ns " + ns + ")"
 	}

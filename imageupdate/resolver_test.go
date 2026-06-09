@@ -139,6 +139,21 @@ func TestResolver_LatestImage_ExcludesPrerelease(t *testing.T) {
 	}
 }
 
+func TestResolver_LatestVersions_ReturnsStableAndPrerelease(t *testing.T) {
+	r := mockRegistryResolver([]string{"1.25.3", "1.28.0-beta.1", "1.27.0", "latest", "1.28.0-alpha.1"})
+	tg := UpdateTarget{Kind: TargetImage, CurrentValue: "nginx:1.25.3", Image: image.NewFromIdentifier("nginx:1.25.3")}
+	latest, err := r.ResolveLatestVersions(context.Background(), tg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Stable != "1.27.0" {
+		t.Errorf("stable = %q, want 1.27.0", latest.Stable)
+	}
+	if latest.Prerelease != "1.28.0-beta.1" {
+		t.Errorf("prerelease = %q, want 1.28.0-beta.1", latest.Prerelease)
+	}
+}
+
 func TestResolver_LatestChart_HTTP(t *testing.T) {
 	r := &Resolver{HelmIndex: fakeHelmIndex{versions: []string{"6.5.0", "6.6.0", "6.7.0-rc.1", "6.5.4"}}}
 	tg := UpdateTarget{Kind: TargetChart, ChartName: "podinfo", RepoURL: "https://example.com"}

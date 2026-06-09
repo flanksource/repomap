@@ -102,6 +102,7 @@ func runScan(opts ScanOptions) (any, error) {
 		if !opts.Verbose {
 			fm.ScopeMatches = nil
 		}
+		fm.Path = displayPathForRepoFile(conf, relPath)
 		results = append(results, *fm)
 	}
 
