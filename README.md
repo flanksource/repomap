@@ -73,6 +73,29 @@ repomap eval --file rules.yaml
 repomap eval --expr 'kubernetes.kind == "Secret"'
 ```
 
+### `deps`
+
+Generate dependency graphs for Go, Maven, Gradle, npm, and pnpm projects.
+
+```bash
+# Pretty tree output
+repomap deps
+
+# JSON export via stdout
+repomap deps --json > out.json
+
+# Only scan selected managers
+repomap deps --manager go,pnpm
+
+# Include transitive dependencies
+repomap deps --depth 0
+```
+
+By default, `deps` auto-detects supported manifests, tries native package
+manager resolution, and falls back to manifest or lockfile parsing with warnings.
+It prints direct dependencies by default; use `--depth 0` for the full
+transitive graph.
+
 ### `version`
 
 Print version, commit hash, build date, and Go version.
@@ -81,7 +104,7 @@ Print version, commit hash, build date, and Go version.
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--format` / `-o` | Output format: `pretty`, `json`, `yaml`, `csv`, `table` | `pretty` |
+| `--format` / `--json` / `--yaml` / `--csv` | Output format: `pretty`, `json`, `yaml`, `csv`, `markdown`, `html` | `pretty` |
 
 ## Configuration
 
