@@ -21,6 +21,14 @@ var ignoredDirs = map[string]bool{
 }
 
 func Discover(root string, managers []Manager) ([]Project, []Warning, error) {
+	return discover(root, managers, true)
+}
+
+func discoverOffline(root string, managers []Manager) ([]Project, []Warning, error) {
+	return discover(root, managers, false)
+}
+
+func discover(root string, managers []Manager, useGit bool) ([]Project, []Warning, error) {
 	selected := managerSet(managers)
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
@@ -34,7 +42,7 @@ func Discover(root string, managers []Manager) ([]Project, []Warning, error) {
 		absRoot = filepath.Dir(absRoot)
 	}
 
-	files, err := discoverManifestFiles(absRoot)
+	files, err := discoverManifestFiles(absRoot, useGit)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -112,9 +120,11 @@ func Discover(root string, managers []Manager) ([]Project, []Warning, error) {
 	return projects, warnings, nil
 }
 
-func discoverManifestFiles(root string) ([]string, error) {
-	if files, ok := gitManifestFiles(root); ok {
-		return files, nil
+func discoverManifestFiles(root string, useGit bool) ([]string, error) {
+	if useGit {
+		if files, ok := gitManifestFiles(root); ok {
+			return files, nil
+		}
 	}
 	return walkManifestFiles(root)
 }

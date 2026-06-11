@@ -17,6 +17,8 @@ func (e *Export) Pretty() api.Text {
 	t = t.Append(fmt.Sprintf("  projects=%d nodes=%d edges=%d", e.Statistics.Projects, e.Statistics.Total, e.Statistics.Edges), "text-muted")
 	if tree, ok := dependencyTree(e.Roots); ok {
 		t = t.NewLine().Add(tree)
+	} else if len(e.Nodes) > 0 {
+		t = t.NewLine().Add(flatNodesText(e.Nodes))
 	}
 	if len(e.Warnings) > 0 {
 		t = t.NewLine().Append("Warnings", "font-bold text-yellow-600")
@@ -94,6 +96,58 @@ type dependencyTag struct {
 	style string
 }
 
+func flatNodesText(nodes []FlatNode) api.Text {
+	t := clicky.Text("")
+	for i, node := range nodes {
+		if i > 0 {
+			t = t.NewLine()
+		}
+		t = t.Append("[", "text-muted").
+			Append(string(node.Manager), managerStyle(node.Manager)).
+			Append("] ", "text-muted").
+			Append(node.Name, "font-bold text-cyan-600")
+		if node.Version != "" {
+			t = t.Append("@"+node.Version, "font-mono text-muted")
+		}
+		tags := flatNodeTags(node)
+		if len(tags) > 0 {
+			t = t.Space().Append("(", "text-muted")
+			for j, tag := range tags {
+				if j > 0 {
+					t = t.Append(", ", "text-muted")
+				}
+				t = t.Append(tag.label, tag.style)
+			}
+			t = t.Append(")", "text-muted")
+		}
+		t = t.Space().Append(fmt.Sprintf("depth=%d", node.Depth), "text-muted")
+	}
+	return t
+}
+
+func flatNodeTags(node FlatNode) []dependencyTag {
+	var tags []dependencyTag
+	if node.Scope != "" {
+		tags = append(tags, dependencyTag{label: node.Scope, style: scopeStyle(node.Scope)})
+	}
+	if node.Direct {
+		tags = append(tags, dependencyTag{label: "direct", style: "text-green-600"})
+	}
+	if node.Dev {
+		tags = append(tags, dependencyTag{label: "dev", style: "text-yellow-600"})
+	}
+	if node.Optional {
+		tags = append(tags, dependencyTag{label: "optional", style: "text-purple-600"})
+	}
+	if node.Local {
+		tags = append(tags, dependencyTag{label: "local", style: "text-cyan-600"})
+	}
+	sort.Slice(tags, func(i, j int) bool {
+		return tags[i].label < tags[j].label
+	})
+	return tags
+}
+
 func nodeText(node *Node) api.Text {
 	t := clicky.Text("")
 	t = t.Append("[", "text-muted").
@@ -118,47 +172,6 @@ func nodeText(node *Node) api.Text {
 		t = t.Space().Append(node.Path, "font-mono text-muted")
 	}
 	return t
-}
-
-func nodeLabel(node *Node) string {
-	parts := []string{fmt.Sprintf("[%s] %s", node.Manager, node.Name)}
-	if node.Version != "" {
-		parts[0] += "@" + node.Version
-	}
-	var tags []string
-	if node.Scope != "" {
-		tags = append(tags, node.Scope)
-	}
-	if node.Direct {
-		tags = append(tags, "direct")
-	}
-	if node.Dev {
-		tags = append(tags, "dev")
-	}
-	if node.Optional {
-		tags = append(tags, "optional")
-	}
-	if node.Local {
-		tags = append(tags, "local")
-	}
-	if node.Circular {
-		tags = append(tags, "circular")
-	}
-	if node.Duplicate != nil {
-		tag := fmt.Sprintf("dup:%d", node.Duplicate.Count)
-		if node.Duplicate.Conflicts {
-			tag += ":conflict"
-		}
-		tags = append(tags, tag)
-	}
-	if len(tags) > 0 {
-		sort.Strings(tags)
-		parts = append(parts, "("+strings.Join(tags, ", ")+")")
-	}
-	if node.Path != "" {
-		parts = append(parts, node.Path)
-	}
-	return strings.Join(parts, " ")
 }
 
 func nodeTags(node *Node) []dependencyTag {

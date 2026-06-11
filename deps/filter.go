@@ -3,7 +3,6 @@ package deps
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/flanksource/commons/collections"
 )
@@ -233,19 +232,6 @@ func cloneBoolMap(in map[string]bool) map[string]bool {
 	out := make(map[string]bool, len(in))
 	for k, v := range in {
 		out[k] = v
-	}
-	return out
-}
-
-func splitPatterns(values []string) []string {
-	var out []string
-	for _, value := range values {
-		for _, part := range strings.Split(value, ",") {
-			part = strings.TrimSpace(part)
-			if part != "" {
-				out = append(out, part)
-			}
-		}
 	}
 	return out
 }

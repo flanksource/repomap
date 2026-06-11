@@ -17,20 +17,18 @@ const (
 type Mode string
 
 const (
-	ModeAuto     Mode = "auto"
-	ModeNative   Mode = "native"
 	ModeManifest Mode = "manifest"
 )
 
 type Options struct {
-	Managers       []Manager
-	Mode           Mode
-	MaxDepth       int
-	Filters        []string
-	Configurations []string
-	Strict         bool
-	Runner         CommandRunner
-	Now            func() time.Time
+	Managers        []Manager
+	Mode            Mode
+	MaxDepth        int
+	Filters         []string
+	Flat            bool
+	IncludeIndirect bool
+	Runner          CommandRunner
+	Now             func() time.Time
 }
 
 type Project struct {
@@ -42,9 +40,9 @@ type Project struct {
 
 type Export struct {
 	Metadata   Metadata    `json:"metadata"`
-	Roots      []*Node     `json:"roots"`
-	Nodes      []FlatNode  `json:"nodes"`
-	Edges      []Edge      `json:"edges"`
+	Roots      []*Node     `json:"roots,omitempty"`
+	Nodes      []FlatNode  `json:"nodes,omitempty"`
+	Edges      []Edge      `json:"edges,omitempty"`
 	Statistics Statistics  `json:"statistics"`
 	Duplicates []Duplicate `json:"duplicates,omitempty"`
 	Warnings   []Warning   `json:"warnings,omitempty"`
@@ -58,7 +56,7 @@ type Metadata struct {
 	Mode            Mode      `json:"mode"`
 	Filter          []string  `json:"filter,omitempty"`
 	MaxDepth        int       `json:"max_depth,omitempty"`
-	Configurations  []string  `json:"configurations,omitempty"`
+	Flat            bool      `json:"flat,omitempty"`
 	ProjectsScanned int       `json:"projects_scanned"`
 }
 

@@ -8,11 +8,18 @@ import (
 )
 
 func TestParseManagers(t *testing.T) {
-	got, err := parseManagers([]string{"go,npm", "pnpm"})
+	got, err := parseManagers([]string{"go,npm", "pnpm", "image", "docker", "helm"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []depgraph.Manager{depgraph.ManagerGo, depgraph.ManagerNPM, depgraph.ManagerPNPM}
+	want := []depgraph.Manager{
+		depgraph.ManagerGo,
+		depgraph.ManagerNPM,
+		depgraph.ManagerPNPM,
+		depgraph.ManagerImage,
+		depgraph.ManagerImage,
+		depgraph.ManagerHelm,
+	}
 	if len(got) != len(want) {
 		t.Fatalf("len = %d, want %d: %#v", len(got), len(want), got)
 	}
@@ -45,14 +52,15 @@ func TestParseUpdateManagers(t *testing.T) {
 	}
 }
 
-func TestParseDepsMode(t *testing.T) {
-	for _, mode := range []string{"", "auto", "native", "manifest"} {
-		if _, err := parseDepsMode(mode); err != nil {
-			t.Fatalf("parseDepsMode(%q): %v", mode, err)
-		}
+func TestDepsNativeResolutionFlagsRemoved(t *testing.T) {
+	cmd, _, err := rootCmd.Find([]string{"deps"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := parseDepsMode("lockfile"); err == nil {
-		t.Fatal("expected unsupported mode error")
+	for _, name := range []string{"mode", "configuration", "strict"} {
+		if flag := cmd.Flags().Lookup(name); flag != nil {
+			t.Fatalf("%s flag should be removed from deps listing", name)
+		}
 	}
 }
 
@@ -70,6 +78,19 @@ func TestDepsDepthDefault(t *testing.T) {
 	}
 	if !strings.Contains(flag.Usage, "0 = unlimited") {
 		t.Fatalf("depth help should document unlimited mode, got %q", flag.Usage)
+	}
+}
+
+func TestDepsFlatAndIncludeIndirectFlags(t *testing.T) {
+	cmd, _, err := rootCmd.Find([]string{"deps"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flag := cmd.Flags().Lookup("flat"); flag == nil {
+		t.Fatal("flat flag not registered")
+	}
+	if flag := cmd.Flags().Lookup("include-indirect"); flag == nil {
+		t.Fatal("include-indirect flag not registered")
 	}
 }
 

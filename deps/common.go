@@ -57,11 +57,7 @@ func isReplacementDependency(node *Node) bool {
 	if node.Local {
 		return true
 	}
-	return node.Manager == ManagerGo && node.Source != "" && node.Source != "go.mod" && node.Source != "go mod graph"
-}
-
-func sortStrings(values []string) {
-	sort.Strings(values)
+	return node.Manager == ManagerGo && node.Source != "" && node.Source != "go.mod"
 }
 
 func isLocalRef(ref string) bool {

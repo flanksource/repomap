@@ -28,8 +28,9 @@ replace github.com/acme/lib => ../lib
 `)
 
 	got, err := Scan(context.Background(), dir, Options{
-		Mode: ModeManifest,
-		Now:  func() time.Time { return time.Unix(1, 0).UTC() },
+		Mode:     ModeManifest,
+		MaxDepth: 1,
+		Now:      func() time.Time { return time.Unix(1, 0).UTC() },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -40,25 +41,149 @@ replace github.com/acme/lib => ../lib
 	if len(got.Roots) != 1 || got.Roots[0].Name != "github.com/acme/app" {
 		t.Fatalf("unexpected roots: %#v", got.Roots)
 	}
-	if len(got.Roots[0].Children) != 2 {
-		t.Fatalf("children = %d, want 2", len(got.Roots[0].Children))
+	if len(got.Roots[0].Children) != 1 {
+		t.Fatalf("children = %d, want 1 (indirect excluded by default)", len(got.Roots[0].Children))
 	}
 	lib := findChild(got.Roots[0], "github.com/acme/lib")
 	if lib == nil || lib.Name != "github.com/acme/lib" || !lib.Local || lib.Source != "../lib" {
 		t.Fatalf("replace/local metadata not captured: %#v", lib)
 	}
-	if got.Statistics.Total != 3 || got.Statistics.Edges != 2 {
-		t.Fatalf("stats = %+v, want total=3 edges=2", got.Statistics)
+	if len(got.Nodes) != 0 || len(got.Edges) != 0 {
+		t.Fatalf("default export should omit flat nodes/edges, got nodes=%d edges=%d", len(got.Nodes), len(got.Edges))
 	}
 	data, err := json.Marshal(got)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"nodes"`) || !strings.Contains(string(data), `"edges"`) {
-		t.Fatalf("json export missing graph fields: %s", data)
+	if !strings.Contains(string(data), `"roots"`) {
+		t.Fatalf("default json export missing roots: %s", data)
 	}
-	if strings.Contains(string(data), `"tree"`) {
-		t.Fatalf("json export should not include presentation-only tree fields: %s", data)
+}
+
+func TestScanFlatExport(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), `module github.com/acme/app
+
+go 1.22
+
+require github.com/acme/lib v1.2.3
+`)
+
+	got, err := Scan(context.Background(), dir, Options{
+		Mode:     ModeManifest,
+		MaxDepth: 1,
+		Flat:     true,
+		Now:      func() time.Time { return time.Unix(1, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Roots) != 0 {
+		t.Fatalf("flat export should omit roots, got %d", len(got.Roots))
+	}
+	if len(got.Nodes) != 2 || len(got.Edges) != 1 {
+		t.Fatalf("flat export nodes=%d edges=%d, want nodes=2 edges=1", len(got.Nodes), len(got.Edges))
+	}
+	if !got.Metadata.Flat {
+		t.Fatal("metadata.flat should be true")
+	}
+	data, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"nodes"`) {
+		t.Fatalf("flat json export missing nodes: %s", data)
+	}
+	if strings.Contains(string(data), `"roots"`) {
+		t.Fatalf("flat json export should omit roots: %s", data)
+	}
+}
+
+func TestFlatExportPretty(t *testing.T) {
+	export := &Export{
+		Nodes: []FlatNode{
+			{ID: "go:github.com/acme/app", Name: "github.com/acme/app", Manager: ManagerGo, Depth: 0},
+			{ID: "go:github.com/acme/lib@v1.2.3", Name: "github.com/acme/lib", Version: "v1.2.3", Manager: ManagerGo, Scope: "require", Direct: true, Depth: 1},
+		},
+	}
+	got := export.Pretty().String()
+	if !strings.Contains(got, "github.com/acme/lib@v1.2.3") {
+		t.Fatalf("flat pretty missing node label: %q", got)
+	}
+	if !strings.Contains(got, "depth=1") {
+		t.Fatalf("flat pretty missing depth marker: %q", got)
+	}
+	if !strings.Contains(got, "direct") {
+		t.Fatalf("flat pretty missing direct tag: %q", got)
+	}
+}
+
+func TestScanDefaultsToOfflineManifestResolution(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), `module github.com/acme/app
+
+go 1.22
+
+require github.com/acme/lib v1.2.3
+`)
+
+	got, err := Scan(context.Background(), dir, Options{
+		MaxDepth: 1,
+		Now:      func() time.Time { return time.Unix(1, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Metadata.Mode != ModeManifest {
+		t.Fatalf("mode = %q, want %q", got.Metadata.Mode, ModeManifest)
+	}
+	if len(got.Roots) != 1 || got.Roots[0].Source != "go.mod" {
+		t.Fatalf("expected go.mod manifest root, got %#v", got.Roots)
+	}
+	if child := findChild(got.Roots[0], "github.com/acme/lib"); child == nil || !child.Direct {
+		t.Fatalf("expected direct manifest dependency, got %#v", got.Roots[0].Children)
+	}
+}
+
+func TestScanImageAndHelmManifestTargets(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	runGit(t, dir, "init")
+	writeFile(t, filepath.Join(dir, "apps", "workloads.yaml"), deploymentUpdateFixture)
+	writeFile(t, filepath.Join(dir, "apps", "helmrelease.yaml"), helmReleaseUpdateFixture)
+	runGit(t, dir, "add", ".")
+
+	got, err := Scan(context.Background(), ".", Options{
+		Managers: []Manager{ManagerImage, ManagerHelm},
+		Now:      func() time.Time { return time.Unix(1, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Metadata.ProjectsScanned != 2 {
+		t.Fatalf("projects scanned = %d, want 2 image/helm roots", got.Metadata.ProjectsScanned)
+	}
+	if len(got.Roots) != 2 {
+		t.Fatalf("roots = %d, want image and helm roots: %#v", len(got.Roots), got.Roots)
+	}
+	imageRoot := findRoot(got.Roots, ManagerImage)
+	if imageRoot == nil || imageRoot.Name != "container images" || len(imageRoot.Children) != 2 {
+		t.Fatalf("image root not resolved: %#v", imageRoot)
+	}
+	nginx := findChild(imageRoot, "nginx")
+	if nginx == nil || nginx.Version != "1.25.3" || nginx.Path != "apps/workloads.yaml" || nginx.Source != "nginx:1.25.3" {
+		t.Fatalf("nginx image node mismatch: %#v", nginx)
+	}
+	helmRoot := findRoot(got.Roots, ManagerHelm)
+	if helmRoot == nil || helmRoot.Name != "helm charts" || len(helmRoot.Children) != 1 {
+		t.Fatalf("helm root not resolved: %#v", helmRoot)
+	}
+	podinfo := findChild(helmRoot, "podinfo")
+	if podinfo == nil || podinfo.Version != "6.5.0" || podinfo.Source != "https://stefanprodan.github.io/podinfo" {
+		t.Fatalf("helm node mismatch: %#v", podinfo)
+	}
+	if got.Statistics.ByManager[ManagerImage] != 3 || got.Statistics.ByManager[ManagerHelm] != 2 {
+		t.Fatalf("manager stats = %#v, want image=3 helm=2", got.Statistics.ByManager)
 	}
 }
 
@@ -255,6 +380,15 @@ func findChild(root *Node, name string) *Node {
 	for _, child := range root.Children {
 		if child.Name == name {
 			return child
+		}
+	}
+	return nil
+}
+
+func findRoot(roots []*Node, manager Manager) *Node {
+	for _, root := range roots {
+		if root.Manager == manager {
+			return root
 		}
 	}
 	return nil

@@ -1,8 +1,6 @@
 package deps
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,119 +10,12 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
-type pnpmNativeNode struct {
-	Name         string         `json:"name"`
-	From         string         `json:"from"`
-	Version      string         `json:"version"`
-	Path         string         `json:"path"`
-	Private      bool           `json:"private"`
-	Dependencies pnpmNativeDeps `json:"dependencies"`
-}
-
-type pnpmNativeDeps []pnpmNativeNode
-
-func (d *pnpmNativeDeps) UnmarshalJSON(data []byte) error {
-	if strings.TrimSpace(string(data)) == "null" {
-		*d = nil
-		return nil
-	}
-	var list []pnpmNativeNode
-	if err := json.Unmarshal(data, &list); err == nil {
-		*d = list
-		return nil
-	}
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(data, &object); err != nil {
-		return err
-	}
-	keys := make([]string, 0, len(object))
-	for key := range object {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	out := make([]pnpmNativeNode, 0, len(keys))
-	for _, key := range keys {
-		var node pnpmNativeNode
-		if err := json.Unmarshal(object[key], &node); err != nil {
-			var version string
-			if err2 := json.Unmarshal(object[key], &version); err2 != nil {
-				return fmt.Errorf("dependency %s: %w", key, err)
-			}
-			node.Version = version
-		}
-		node.Name = firstNonEmpty(node.Name, node.From, key)
-		out = append(out, node)
-	}
-	*d = out
-	return nil
-}
-
-func resolvePNPMNative(ctx context.Context, project Project, opts Options) (*Node, []Warning, error) {
-	args := []string{"list", "--json", "--depth", "Infinity", "--lockfile-only"}
-	result, err := opts.Runner.Run(ctx, Command{Dir: project.Dir, Name: "pnpm", Args: args})
-	if err != nil || strings.TrimSpace(result.Stdout) == "" {
-		args = []string{"list", "--json", "--depth", "Infinity"}
-		result, err = opts.Runner.Run(ctx, Command{Dir: project.Dir, Name: "pnpm", Args: args})
-	}
-	if err != nil && strings.TrimSpace(result.Stdout) == "" {
-		return nil, nil, err
-	}
-	root, parseErr := parsePNPMNative([]byte(result.Stdout), project)
-	if parseErr != nil {
-		if err != nil {
-			return nil, nil, fmt.Errorf("%v; also failed to parse stdout: %w", err, parseErr)
-		}
-		return nil, nil, parseErr
-	}
-	root.Path = project.File
-	root.Source = "pnpm list"
-	if err != nil {
-		return root, []Warning{{Manager: ManagerPNPM, Project: project.Dir, Message: "pnpm list exited non-zero but produced parseable JSON: " + err.Error()}}, nil
-	}
-	return root, nil, nil
-}
-
 func resolvePNPMManifest(project Project) (*Node, []Warning, error) {
 	root, err := parsePNPMLock(project.File)
 	if err != nil {
 		return nil, nil, err
 	}
-	return root, []Warning{{Manager: ManagerPNPM, Project: project.Dir, Message: "manifest fallback parsed pnpm-lock.yaml; peer and hoisting semantics may be approximate"}}, nil
-}
-
-func parsePNPMNative(data []byte, project Project) (*Node, error) {
-	var roots []pnpmNativeNode
-	if err := json.Unmarshal(data, &roots); err != nil {
-		var root pnpmNativeNode
-		if err2 := json.Unmarshal(data, &root); err2 != nil {
-			return nil, err
-		}
-		roots = []pnpmNativeNode{root}
-	}
-	root := NewNode(ManagerPNPM, filepath.Base(project.Dir), "")
-	root.Source = "pnpm list"
-	for _, nativeRoot := range roots {
-		child := convertPNPMNative(nativeRoot, 1)
-		child.Direct = true
-		root.Children = append(root.Children, child)
-	}
-	sortChildren(root)
-	return root, nil
-}
-
-func convertPNPMNative(input pnpmNativeNode, depth int) *Node {
-	name := input.Name
-	if name == "" {
-		name = input.Path
-	}
-	node := NewNode(ManagerPNPM, name, input.Version)
-	node.Depth = depth
-	node.Source = input.Path
-	for _, dep := range input.Dependencies {
-		node.Children = append(node.Children, convertPNPMNative(dep, depth+1))
-	}
-	sortChildren(node)
-	return node
+	return root, []Warning{{Manager: ManagerPNPM, Project: project.Dir, Message: "offline pnpm-lock.yaml parsing may approximate peer and hoisting semantics"}}, nil
 }
 
 func parsePNPMLock(path string) (*Node, error) {
