@@ -1,24 +1,12 @@
 package deps
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 )
-
-type npmTree struct {
-	Name            string              `json:"name"`
-	Version         string              `json:"version"`
-	Dependencies    map[string]*npmTree `json:"dependencies"`
-	Dev             bool                `json:"dev"`
-	Optional        bool                `json:"optional"`
-	Problems        []string            `json:"problems"`
-	PackageLockOnly bool                `json:"packageLockOnly"`
-}
 
 type packageJSON struct {
 	Name                 string            `json:"name"`
@@ -58,69 +46,19 @@ type packageLockV1Item struct {
 	Dependencies map[string]packageLockV1Item `json:"dependencies"`
 }
 
-func resolveNPMNative(ctx context.Context, project Project, opts Options) (*Node, []Warning, error) {
-	args := []string{"ls", "--json", "--all"}
-	result, err := opts.Runner.Run(ctx, Command{Dir: project.Dir, Name: "npm", Args: args})
-	if strings.TrimSpace(result.Stdout) == "" && err != nil {
-		return nil, nil, err
-	}
-	root, parseErr := parseNPMTree([]byte(result.Stdout), project)
-	if parseErr != nil {
-		if err != nil {
-			return nil, nil, fmt.Errorf("%v; also failed to parse stdout: %w", err, parseErr)
-		}
-		return nil, nil, parseErr
-	}
-	root.Path = project.File
-	root.Source = "npm ls"
-	if err != nil {
-		return root, []Warning{{Manager: ManagerNPM, Project: project.Dir, Message: "npm ls exited non-zero but produced parseable JSON: " + err.Error()}}, nil
-	}
-	return root, nil, nil
-}
-
 func resolveNPMManifest(project Project) (*Node, []Warning, error) {
 	if filepath.Base(project.File) == "package-lock.json" || filepath.Base(project.File) == "npm-shrinkwrap.json" {
 		root, err := parsePackageLock(project.File)
-		if err == nil {
-			return root, nil, nil
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse %s: %w", project.File, err)
 		}
+		return root, nil, nil
 	}
 	root, err := parsePackageJSON(filepath.Join(project.Dir, "package.json"))
 	if err != nil {
 		return nil, nil, err
 	}
-	return root, []Warning{{Manager: ManagerNPM, Project: project.Dir, Message: "manifest fallback includes package.json direct dependencies only; install tree may be unavailable"}}, nil
-}
-
-func parseNPMTree(data []byte, project Project) (*Node, error) {
-	var tree npmTree
-	if err := json.Unmarshal(data, &tree); err != nil {
-		return nil, err
-	}
-	if tree.Name == "" {
-		tree.Name = filepath.Base(project.Dir)
-	}
-	return convertNPMTree(&tree, 0), nil
-}
-
-func convertNPMTree(tree *npmTree, depth int) *Node {
-	node := NewNode(ManagerNPM, tree.Name, tree.Version)
-	node.Depth = depth
-	node.Dev = tree.Dev
-	node.Optional = tree.Optional
-	node.Source = "npm"
-	keys := make([]string, 0, len(tree.Dependencies))
-	for key := range tree.Dependencies {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		child := convertNPMTree(tree.Dependencies[key], depth+1)
-		child.Direct = depth == 0
-		node.Children = append(node.Children, child)
-	}
-	return node
+	return root, []Warning{{Manager: ManagerNPM, Project: project.Dir, Message: "offline package.json parsing includes direct dependencies only; install tree may be unavailable"}}, nil
 }
 
 func parsePackageJSON(path string) (*Node, error) {

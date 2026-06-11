@@ -91,10 +91,10 @@ repomap deps --manager go,pnpm
 repomap deps --depth 0
 ```
 
-By default, `deps` auto-detects supported manifests, tries native package
-manager resolution, and falls back to manifest or lockfile parsing with warnings.
-It prints direct dependencies by default; use `--depth 0` for the full
-transitive graph.
+By default, `deps` auto-detects supported manifests and reads local manifest or
+lockfile content without running package-manager commands. It prints direct
+dependencies by default; use `--depth 0` for the full graph available from the
+local files.
 
 ### `version`
 

@@ -2,10 +2,10 @@ package deps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/flanksource/clicky/task"
@@ -14,10 +14,10 @@ import (
 
 func Scan(ctx context.Context, path string, opts Options) (*Export, error) {
 	if opts.Mode == "" {
-		opts.Mode = ModeAuto
+		opts.Mode = ModeManifest
 	}
-	if opts.Runner == nil {
-		opts.Runner = ExecRunner{}
+	if opts.Mode != ModeManifest {
+		return nil, fmt.Errorf("unsupported dependency resolution mode %q", opts.Mode)
 	}
 	now := time.Now
 	if opts.Now != nil {
@@ -27,19 +27,56 @@ func Scan(ctx context.Context, path string, opts Options) (*Export, error) {
 	if err != nil {
 		return nil, err
 	}
-	projects, warnings, err := Discover(absPath, opts.Managers)
-	if err != nil {
-		return nil, err
+	packageManagers := packageScanManagers(opts.Managers)
+	scanPackages := len(opts.Managers) == 0 || len(packageManagers) > 0
+	scanImages := includesImageScanManagers(opts.Managers)
+
+	var projects []Project
+	var warnings []Warning
+	var packageErr error
+	if scanPackages {
+		projects, warnings, packageErr = discoverOffline(absPath, packageManagers)
+		if packageErr != nil && !scanImages {
+			return nil, packageErr
+		}
 	}
 
-	roots, projectWarnings, err := resolveProjectsWithTasks(ctx, projects, opts)
-	warnings = append(warnings, projectWarnings...)
-	if err != nil {
-		return nil, err
+	if opts.Runner == nil {
+		opts.Runner = ExecRunner{}
+	}
+
+	var roots []*Node
+	if len(projects) > 0 {
+		projectRoots, projectWarnings, err := resolveProjectsWithTasks(ctx, projects, opts)
+		warnings = append(warnings, projectWarnings...)
+		if err != nil {
+			return nil, err
+		}
+		roots = append(roots, projectRoots...)
+	}
+
+	if scanImages {
+		imageRoots, imageWarnings, err := discoverImageDependencyRoots(absPath, imageScanManagers(opts.Managers))
+		warnings = append(warnings, imageWarnings...)
+		if err != nil {
+			if len(roots) == 0 && packageErr != nil {
+				return nil, packageErr
+			}
+			if len(roots) == 0 {
+				return nil, err
+			}
+			warnings = append(warnings, Warning{Message: err.Error()})
+		}
+		roots = append(roots, imageRoots...)
+	}
+
+	if packageErr != nil && len(roots) == 0 {
+		return nil, packageErr
 	}
 	if len(roots) == 0 {
 		return nil, fmt.Errorf("no dependency graphs resolved")
 	}
+	projectsScanned := len(projects) + imageRootCount(roots)
 
 	filteredRoots := make([]*Node, 0, len(roots))
 	for _, root := range roots {
@@ -50,10 +87,10 @@ func Scan(ctx context.Context, path string, opts Options) (*Export, error) {
 	dups := analyzeDuplicates(filteredRoots)
 	applyDuplicateRefs(filteredRoots, dups)
 	nodes, edges, stats := flatten(filteredRoots, dups)
-	stats.Projects = len(projects)
+	stats.Projects = projectsScanned
 
 	sortWarnings(warnings)
-	return &Export{
+	export := &Export{
 		Metadata: Metadata{
 			ExportedAt:      now(),
 			Version:         "1.0",
@@ -62,16 +99,20 @@ func Scan(ctx context.Context, path string, opts Options) (*Export, error) {
 			Mode:            opts.Mode,
 			Filter:          opts.Filters,
 			MaxDepth:        opts.MaxDepth,
-			Configurations:  opts.Configurations,
-			ProjectsScanned: len(projects),
+			Flat:            opts.Flat,
+			ProjectsScanned: projectsScanned,
 		},
-		Roots:      filteredRoots,
-		Nodes:      nodes,
-		Edges:      edges,
 		Statistics: stats,
 		Duplicates: duplicatesList(dups),
 		Warnings:   warnings,
-	}, nil
+	}
+	if opts.Flat {
+		export.Nodes = nodes
+		export.Edges = edges
+	} else {
+		export.Roots = filteredRoots
+	}
+	return export, nil
 }
 
 type projectResolution struct {
@@ -97,9 +138,7 @@ func resolveProjectsWithTasks(ctx context.Context, projects []Project, opts Opti
 		group.Add(projectTaskName(project), func(_ flanksourceContext.Context, tk *task.Task) (projectResolution, error) {
 			tk.SetProgress(0, 1)
 			tk.Infof("resolving %s dependencies in %s", project.Manager, project.Dir)
-			taskOpts := opts
-			taskOpts.Runner = taskCommandRunner{base: opts.Runner, task: tk}
-			root, warnings, err := resolveProject(ctx, project, taskOpts)
+			root, warnings, err := resolveProject(ctx, project, opts)
 			result := projectResolution{
 				Index:    index,
 				Project:  project,
@@ -111,10 +150,6 @@ func resolveProjectsWithTasks(ctx context.Context, projects []Project, opts Opti
 				tk.Warnf("%s", warning.Message)
 			}
 			if err != nil {
-				if opts.Strict || opts.Mode == ModeNative {
-					tk.FailedWithError(err)
-					return result, err
-				}
 				tk.Warnf("%s", err.Error())
 				tk.Warning()
 				return result, nil
@@ -145,8 +180,9 @@ func resolveProjectsWithTasks(ctx context.Context, projects []Project, opts Opti
 	for _, result := range ordered {
 		warnings = append(warnings, result.Warnings...)
 		if result.Err != nil {
-			if opts.Strict || opts.Mode == ModeNative {
-				return nil, warnings, result.Err
+			var te toolError
+			if errors.As(result.Err, &te) {
+				return nil, nil, result.Err
 			}
 			warnings = append(warnings, Warning{Manager: result.Project.Manager, Project: result.Project.Dir, Message: result.Err.Error()})
 			continue
@@ -162,72 +198,35 @@ func projectTaskName(project Project) string {
 	return fmt.Sprintf("%s %s", project.Manager, project.Dir)
 }
 
-type taskCommandRunner struct {
-	base CommandRunner
-	task *task.Task
-}
-
-func (r taskCommandRunner) Run(ctx context.Context, cmd Command) (CommandResult, error) {
-	if r.task != nil {
-		r.task.Infof("running %s %s", cmd.Name, strings.Join(cmd.Args, " "))
-	}
-	result, err := r.base.Run(ctx, cmd)
-	if err != nil && r.task != nil {
-		r.task.Warnf("%s failed: %v", cmd.Name, err)
-	}
-	return result, err
-}
-
 func resolveProject(ctx context.Context, project Project, opts Options) (*Node, []Warning, error) {
-	var root *Node
-	var warnings []Warning
-	var err error
-	if opts.Mode != ModeManifest {
-		root, warnings, err = resolveNative(ctx, project, opts)
-		if err == nil && root != nil {
-			return root, warnings, nil
-		}
-		if opts.Mode == ModeNative {
-			return nil, warnings, fmt.Errorf("%s native resolver failed for %s: %w", project.Manager, project.Dir, err)
-		}
-		warnings = append(warnings, Warning{
-			Manager: project.Manager,
-			Project: project.Dir,
-			Message: fmt.Sprintf("native resolver failed; using manifest fallback: %v", err),
-		})
-	}
-	root, fallbackWarnings, err := resolveManifest(project, opts)
-	warnings = append(warnings, fallbackWarnings...)
+	root, warnings, err := resolveManifest(ctx, project, opts)
 	if err != nil {
+		var te toolError
+		if errors.As(err, &te) {
+			return nil, warnings, err
+		}
 		return nil, warnings, fmt.Errorf("%s manifest resolver failed for %s: %w", project.Manager, project.Dir, err)
 	}
 	return root, warnings, nil
 }
 
-func resolveNative(ctx context.Context, project Project, opts Options) (*Node, []Warning, error) {
+func resolveManifest(ctx context.Context, project Project, opts Options) (*Node, []Warning, error) {
+	transitive := opts.MaxDepth != 1
 	switch project.Manager {
 	case ManagerGo:
-		return resolveGoNative(ctx, project, opts)
+		if transitive {
+			return resolveGoGraph(ctx, project, opts)
+		}
+		return resolveGoManifest(project, opts)
 	case ManagerMaven:
-		return resolveMavenNative(ctx, project, opts)
-	case ManagerGradle:
-		return resolveGradleNative(ctx, project, opts)
-	case ManagerNPM:
-		return resolveNPMNative(ctx, project, opts)
-	case ManagerPNPM:
-		return resolvePNPMNative(ctx, project, opts)
-	default:
-		return nil, nil, fmt.Errorf("unsupported manager %q", project.Manager)
-	}
-}
-
-func resolveManifest(project Project, opts Options) (*Node, []Warning, error) {
-	switch project.Manager {
-	case ManagerGo:
-		return resolveGoManifest(project)
-	case ManagerMaven:
+		if transitive {
+			return resolveMavenTree(ctx, project, opts)
+		}
 		return resolveMavenManifest(project)
 	case ManagerGradle:
+		if transitive {
+			return resolveGradleTree(ctx, project, opts)
+		}
 		return resolveGradleManifest(project)
 	case ManagerNPM:
 		return resolveNPMManifest(project)
@@ -236,6 +235,63 @@ func resolveManifest(project Project, opts Options) (*Node, []Warning, error) {
 	default:
 		return nil, nil, fmt.Errorf("unsupported manager %q", project.Manager)
 	}
+}
+
+// toolError marks a failure that must abort the whole scan rather than degrade
+// to a per-project warning. It wraps errors from package-manager shell-outs
+// (go mod graph, mvn dependency:tree, gradle dependencies) so a missing or
+// failing tool surfaces loudly with a suggestion to rerun with --depth 1.
+type toolError struct {
+	err error
+}
+
+func (e toolError) Error() string { return e.err.Error() }
+
+func (e toolError) Unwrap() error { return e.err }
+
+func packageScanManagers(managers []Manager) []Manager {
+	if len(managers) == 0 {
+		return nil
+	}
+	out := make([]Manager, 0, len(managers))
+	for _, manager := range managers {
+		switch manager {
+		case ManagerGo, ManagerMaven, ManagerGradle, ManagerNPM, ManagerPNPM:
+			out = append(out, manager)
+		}
+	}
+	return out
+}
+
+func imageScanManagers(managers []Manager) []Manager {
+	if len(managers) == 0 {
+		return nil
+	}
+	out := make([]Manager, 0, len(managers))
+	for _, manager := range managers {
+		switch manager {
+		case ManagerImage, ManagerHelm:
+			out = append(out, manager)
+		}
+	}
+	return out
+}
+
+func includesImageScanManagers(managers []Manager) bool {
+	if len(managers) == 0 {
+		return true
+	}
+	return len(imageScanManagers(managers)) > 0
+}
+
+func imageRootCount(roots []*Node) int {
+	count := 0
+	for _, root := range roots {
+		if root != nil && (root.Manager == ManagerImage || root.Manager == ManagerHelm) && root.Source == "kubernetes manifests" {
+			count++
+		}
+	}
+	return count
 }
 
 func sortWarnings(warnings []Warning) {

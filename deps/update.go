@@ -600,22 +600,6 @@ func sortSelectedUpdateChoicesByFile(choices []UpdateChoice) []UpdateChoice {
 	return out
 }
 
-func renderUpdateChoice(choice UpdateChoice) api.Textable {
-	c := choice.Candidate
-	text := clicky.Text(fmt.Sprintf("[%s] %s", c.Manager, c.Name), managerStyle(c.Manager)).
-		Append("@"+c.Current, "font-mono text-muted")
-	if choice.LatestStable != "" {
-		text = text.Space().Append("latest "+choice.LatestStable, "text-green-600")
-	}
-	if choice.LatestPrerelease != "" {
-		text = text.Space().Append("pre "+choice.LatestPrerelease, "text-yellow-600")
-	}
-	if c.Scope != "" {
-		text = text.Space().Append(c.Scope, "text-muted")
-	}
-	return text
-}
-
 func (p UpdatePlan) Pretty() api.Text {
 	t := clicky.Text(fmt.Sprintf("[%s] %s", p.Manager, p.Name), managerStyle(p.Manager))
 	if p.OldVersion != "" || p.NewVersion != "" {

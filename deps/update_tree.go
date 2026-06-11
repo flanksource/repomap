@@ -579,7 +579,7 @@ func runUpdateChoiceTreePicker(choices []UpdateChoice) ([]UpdateChoice, bool) {
 	if err != nil {
 		return nil, false
 	}
-	defer tty.Close()
+	defer func() { _ = tty.Close() }()
 
 	releaseTerminal, _ := task.AcquirePromptTerminal()
 	if releaseTerminal != nil {
