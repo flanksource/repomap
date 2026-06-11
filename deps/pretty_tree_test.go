@@ -115,10 +115,19 @@ func imageTreeExport() *Export {
 func TestTreeGroupsKubernetesByNamespaceAndKind(t *testing.T) {
 	out := imageTreeExport().Pretty().String()
 
+	if prettyLine(out, "container images") != "" {
+		t.Fatalf("synthetic container images root should not render:\n%s", out)
+	}
+
 	for _, group := range []string{"default", "Deployment", "data", "StatefulSet"} {
 		if prettyLine(out, group) == "" {
 			t.Fatalf("kubernetes tree missing %q group line in:\n%s", group, out)
 		}
+	}
+
+	resourceLine := prettyLine(out, "apps/web.yaml")
+	if resourceLine == "" || !strings.Contains(resourceLine, "web") {
+		t.Fatalf("expected resource node 'web (apps/web.yaml)' in:\n%s", out)
 	}
 
 	leafLine := prettyLine(out, "nginx@1.25.3")
@@ -128,8 +137,8 @@ func TestTreeGroupsKubernetesByNamespaceAndKind(t *testing.T) {
 	if strings.Contains(leafLine, "[image]") {
 		t.Fatalf("image leaf must not repeat the [image] prefix: %q", leafLine)
 	}
-	if !strings.Contains(leafLine, "web") {
-		t.Fatalf("image leaf should show resource/container detail: %q", leafLine)
+	if !strings.Contains(leafLine, "(web)") {
+		t.Fatalf("image leaf should show its container in parens: %q", leafLine)
 	}
 
 	nsLine := prettyLine(out, "default")
