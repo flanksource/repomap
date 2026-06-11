@@ -133,6 +133,31 @@ type Warning struct {
 	Message string  `json:"message"`
 }
 
+// Structured node properties carried out-of-band for display grouping (not serialized).
+const (
+	propNamespace = "namespace"
+	propKind      = "kind"
+	propResource  = "resource"
+	propContainer = "container"
+)
+
+func (n *Node) setProp(key, value string) {
+	if value == "" {
+		return
+	}
+	if n.properties == nil {
+		n.properties = map[string]string{}
+	}
+	n.properties[key] = value
+}
+
+func (n *Node) prop(key string) string {
+	if n == nil || n.properties == nil {
+		return ""
+	}
+	return n.properties[key]
+}
+
 func NewNode(manager Manager, name, version string) *Node {
 	return &Node{
 		ID:      NodeID(manager, name, version),

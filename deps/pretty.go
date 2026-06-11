@@ -15,7 +15,7 @@ func (e *Export) Pretty() api.Text {
 	}
 	t := clicky.Text("Dependency Graph", "font-bold")
 	t = t.Append(fmt.Sprintf("  projects=%d nodes=%d edges=%d", e.Statistics.Projects, e.Statistics.Total, e.Statistics.Edges), "text-muted")
-	if tree, ok := dependencyTree(e.Roots); ok {
+	if tree, ok := dependencyDisplayTree(e.Roots, e.Metadata.Path); ok {
 		t = t.NewLine().Add(tree)
 	} else if len(e.Nodes) > 0 {
 		t = t.NewLine().Add(flatNodesText(e.Nodes))
@@ -52,48 +52,51 @@ func (n *Node) Pretty() api.Text {
 	if n == nil {
 		return clicky.Text("")
 	}
-	return nodeText(n)
+	return nodeText(n, true)
 }
 
 func (n *Node) GetChildren() []api.TreeNode {
 	if n == nil || len(n.Children) == 0 {
 		return nil
 	}
-	nodeChildren := make([]*Node, 0, len(n.Children))
-	for _, child := range n.Children {
-		if child != nil {
-			nodeChildren = append(nodeChildren, child)
-		}
-	}
-	sort.SliceStable(nodeChildren, func(i, j int) bool {
-		return dependencyLess(nodeChildren[i], nodeChildren[j])
-	})
-	children := make([]api.TreeNode, 0, len(nodeChildren))
-	for _, child := range nodeChildren {
+	sorted := sortedNodes(n.Children)
+	children := make([]api.TreeNode, 0, len(sorted))
+	for _, child := range sorted {
 		children = append(children, child)
 	}
 	return children
 }
 
-func dependencyTree(roots []*Node) (api.TextTree, bool) {
-	if len(roots) == 0 {
-		return api.TextTree{}, false
-	}
-	nodes := make([]api.TreeNode, 0, len(roots))
-	for _, root := range roots {
-		if root != nil {
-			nodes = append(nodes, root)
+func sortedNodes(nodes []*Node) []*Node {
+	out := make([]*Node, 0, len(nodes))
+	for _, child := range nodes {
+		if child != nil {
+			out = append(out, child)
 		}
 	}
-	if len(nodes) == 0 {
-		return api.TextTree{}, false
-	}
-	return api.NewTree(nodes...), true
+	sort.SliceStable(out, func(i, j int) bool {
+		return dependencyLess(out[i], out[j])
+	})
+	return out
 }
 
 type dependencyTag struct {
 	label string
 	style string
+}
+
+func appendTags(t api.Text, tags []dependencyTag) api.Text {
+	if len(tags) == 0 {
+		return t
+	}
+	t = t.Space().Append("(", "text-muted")
+	for i, tag := range tags {
+		if i > 0 {
+			t = t.Append(", ", "text-muted")
+		}
+		t = t.Append(tag.label, tag.style)
+	}
+	return t.Append(")", "text-muted")
 }
 
 func flatNodesText(nodes []FlatNode) api.Text {
@@ -109,17 +112,7 @@ func flatNodesText(nodes []FlatNode) api.Text {
 		if node.Version != "" {
 			t = t.Append("@"+node.Version, "font-mono text-muted")
 		}
-		tags := flatNodeTags(node)
-		if len(tags) > 0 {
-			t = t.Space().Append("(", "text-muted")
-			for j, tag := range tags {
-				if j > 0 {
-					t = t.Append(", ", "text-muted")
-				}
-				t = t.Append(tag.label, tag.style)
-			}
-			t = t.Append(")", "text-muted")
-		}
+		t = appendTags(t, flatNodeTags(node))
 		t = t.Space().Append(fmt.Sprintf("depth=%d", node.Depth), "text-muted")
 	}
 	return t
@@ -127,47 +120,28 @@ func flatNodesText(nodes []FlatNode) api.Text {
 
 func flatNodeTags(node FlatNode) []dependencyTag {
 	var tags []dependencyTag
-	if node.Scope != "" {
-		tags = append(tags, dependencyTag{label: node.Scope, style: scopeStyle(node.Scope)})
+	if tag, ok := scopeTag(node.Scope); ok {
+		tags = append(tags, tag)
 	}
-	if node.Direct {
-		tags = append(tags, dependencyTag{label: "direct", style: "text-green-600"})
+	tags = append(tags, flagTags(node.Dev, node.Optional, node.Local)...)
+	if tag, ok := replacedTag(node.Manager, node.Source, node.Local, node.Depth); ok {
+		tags = append(tags, tag)
 	}
-	if node.Dev {
-		tags = append(tags, dependencyTag{label: "dev", style: "text-yellow-600"})
-	}
-	if node.Optional {
-		tags = append(tags, dependencyTag{label: "optional", style: "text-purple-600"})
-	}
-	if node.Local {
-		tags = append(tags, dependencyTag{label: "local", style: "text-cyan-600"})
-	}
-	sort.Slice(tags, func(i, j int) bool {
-		return tags[i].label < tags[j].label
-	})
-	return tags
+	return sortTags(tags)
 }
 
-func nodeText(node *Node) api.Text {
+func nodeText(node *Node, showManager bool) api.Text {
 	t := clicky.Text("")
-	t = t.Append("[", "text-muted").
-		Append(string(node.Manager), managerStyle(node.Manager)).
-		Append("] ", "text-muted").
-		Append(node.Name, "font-bold text-cyan-600")
+	if showManager {
+		t = t.Append("[", "text-muted").
+			Append(string(node.Manager), managerStyle(node.Manager)).
+			Append("] ", "text-muted")
+	}
+	t = t.Append(node.Name, "font-bold text-cyan-600")
 	if node.Version != "" {
 		t = t.Append("@"+node.Version, "font-mono text-muted")
 	}
-	tags := nodeTags(node)
-	if len(tags) > 0 {
-		t = t.Space().Append("(", "text-muted")
-		for i, tag := range tags {
-			if i > 0 {
-				t = t.Append(", ", "text-muted")
-			}
-			t = t.Append(tag.label, tag.style)
-		}
-		t = t.Append(")", "text-muted")
-	}
+	t = appendTags(t, nodeTags(node))
 	if node.Path != "" {
 		t = t.Space().Append(node.Path, "font-mono text-muted")
 	}
@@ -176,21 +150,61 @@ func nodeText(node *Node) api.Text {
 
 func nodeTags(node *Node) []dependencyTag {
 	var tags []dependencyTag
-	if node.Scope != "" {
-		tags = append(tags, dependencyTag{label: node.Scope, style: scopeStyle(node.Scope)})
+	if tag, ok := scopeTag(node.Scope); ok {
+		tags = append(tags, tag)
 	}
-	if node.Direct {
-		tags = append(tags, dependencyTag{label: "direct", style: "text-green-600"})
+	tags = append(tags, flagTags(node.Dev, node.Optional, node.Local)...)
+	if tag, ok := replacedTag(node.Manager, node.Source, node.Local, node.Depth); ok {
+		tags = append(tags, tag)
 	}
-	if node.Dev {
+	tags = append(tags, statusTags(node)...)
+	return sortTags(tags)
+}
+
+// scopeTag renders a scope as a tag unless it is the manager's default
+// (require/compile/dependencies), which carries no information.
+func scopeTag(scope string) (dependencyTag, bool) {
+	if scope == "" || isDefaultScope(scope) {
+		return dependencyTag{}, false
+	}
+	return dependencyTag{label: scope, style: scopeStyle(scope)}, true
+}
+
+func isDefaultScope(scope string) bool {
+	switch strings.ToLower(scope) {
+	case "require", "compile", "dependencies", "dependency":
+		return true
+	}
+	return false
+}
+
+// replacedTag marks a Go dependency redirected by a non-local replace directive.
+func replacedTag(manager Manager, source string, local bool, depth int) (dependencyTag, bool) {
+	if local || depth == 0 || manager != ManagerGo {
+		return dependencyTag{}, false
+	}
+	if source != "" && source != "go.mod" {
+		return dependencyTag{label: "replaced", style: "text-purple-600"}, true
+	}
+	return dependencyTag{}, false
+}
+
+func flagTags(dev, optional, local bool) []dependencyTag {
+	var tags []dependencyTag
+	if dev {
 		tags = append(tags, dependencyTag{label: "dev", style: "text-yellow-600"})
 	}
-	if node.Optional {
+	if optional {
 		tags = append(tags, dependencyTag{label: "optional", style: "text-purple-600"})
 	}
-	if node.Local {
+	if local {
 		tags = append(tags, dependencyTag{label: "local", style: "text-cyan-600"})
 	}
+	return tags
+}
+
+func statusTags(node *Node) []dependencyTag {
+	var tags []dependencyTag
 	if node.Circular {
 		tags = append(tags, dependencyTag{label: "circular", style: "font-bold text-red-600"})
 	}
@@ -203,6 +217,10 @@ func nodeTags(node *Node) []dependencyTag {
 		}
 		tags = append(tags, dependencyTag{label: tag, style: style})
 	}
+	return tags
+}
+
+func sortTags(tags []dependencyTag) []dependencyTag {
 	sort.Slice(tags, func(i, j int) bool {
 		return tags[i].label < tags[j].label
 	})
