@@ -3,9 +3,11 @@ package deps
 import (
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api"
+	"github.com/flanksource/clicky/api/icons"
 )
 
 // displayNode is a presentation-only tree node: it carries a pre-rendered label
@@ -19,16 +21,28 @@ type displayNode struct {
 
 var _ api.TreeNode = (*displayNode)(nil)
 
-func (d *displayNode) Pretty() api.Text          { return d.text }
+func (d *displayNode) Pretty() api.Text            { return d.text }
 func (d *displayNode) GetChildren() []api.TreeNode { return d.children }
 
+// dependencyDisplayTree renders package roots with their manager prefix and
+// promotes kubernetes (image/helm) dependencies into a unified Namespace → Kind
+// → resource grouping, dropping the synthetic "container images"/"helm charts"
+// root wrappers.
 func dependencyDisplayTree(roots []*Node, scanPath string) (api.TextTree, bool) {
-	top := make([]api.TreeNode, 0, len(roots))
+	var top []api.TreeNode
+	var k8sLeaves []*Node
 	for _, root := range roots {
-		if root != nil {
+		if root == nil {
+			continue
+		}
+		switch root.Manager {
+		case ManagerImage, ManagerHelm:
+			k8sLeaves = append(k8sLeaves, root.Children...)
+		default:
 			top = append(top, rootDisplayNode(root, scanPath))
 		}
 	}
+	top = append(top, namespaceNodes(k8sLeaves)...)
 	if len(top) == 0 {
 		return api.TextTree{}, false
 	}
@@ -43,15 +57,7 @@ func rootDisplayNode(root *Node, scanPath string) *displayNode {
 	if rel := relDisplayPath(scanPath, root.Path); rel != "" {
 		label = label.Space().Append(rel, "font-mono text-muted")
 	}
-
-	node := &displayNode{text: label}
-	switch root.Manager {
-	case ManagerImage, ManagerHelm:
-		node.children = k8sGroupNodes(root.Children)
-	default:
-		node.children = packageDisplayNodes(root.Children)
-	}
-	return node
+	return &displayNode{text: label, children: packageDisplayNodes(root.Children)}
 }
 
 // packageDisplayNodes renders dependency children without repeating the manager
@@ -68,54 +74,51 @@ func packageDisplayNodes(nodes []*Node) []api.TreeNode {
 	return out
 }
 
-// k8sGroupNodes groups image/helm leaves under namespace → kind headers.
-func k8sGroupNodes(leaves []*Node) []api.TreeNode {
-	byNamespace := map[string][]*Node{}
-	var namespaces []string
-	for _, leaf := range sortedNodes(leaves) {
-		ns := leaf.prop(propNamespace)
-		if ns == "" {
-			ns = "(none)"
-		}
-		if _, seen := byNamespace[ns]; !seen {
-			namespaces = append(namespaces, ns)
-		}
-		byNamespace[ns] = append(byNamespace[ns], leaf)
+// namespaceNodes is the top level of the kubernetes grouping.
+func namespaceNodes(leaves []*Node) []api.TreeNode {
+	keys, groups := groupLeaves(sortedNodes(leaves), func(n *Node) string {
+		return orDefault(n.prop(propNamespace), "(none)")
+	})
+	out := make([]api.TreeNode, 0, len(keys))
+	for _, ns := range keys {
+		label := clicky.Text("").AddIcon(icons.Kubernetes).Space().Append(ns, "font-bold")
+		out = append(out, &displayNode{text: label, children: kindNodes(groups[ns])})
 	}
-	sort.Strings(namespaces)
+	return out
+}
 
-	out := make([]api.TreeNode, 0, len(namespaces))
-	for _, ns := range namespaces {
+func kindNodes(leaves []*Node) []api.TreeNode {
+	keys, groups := groupLeaves(leaves, func(n *Node) string {
+		return orDefault(n.prop(propKind), "(unknown)")
+	})
+	out := make([]api.TreeNode, 0, len(keys))
+	for _, kind := range keys {
 		out = append(out, &displayNode{
-			text:     clicky.Text(ns, "font-bold"),
-			children: k8sKindNodes(byNamespace[ns]),
+			text:     clicky.Text(kind, "text-white"),
+			children: resourceNodes(groups[kind]),
 		})
 	}
 	return out
 }
 
-func k8sKindNodes(leaves []*Node) []api.TreeNode {
-	byKind := map[string][]*Node{}
-	var kinds []string
-	for _, leaf := range leaves {
-		kind := leaf.prop(propKind)
-		if kind == "" {
-			kind = "(unknown)"
+// resourceNodes groups leaves by resource name and source file, labelling each
+// with the kind's resource name and a shortened path.
+func resourceNodes(leaves []*Node) []api.TreeNode {
+	keys, groups := groupLeaves(leaves, func(n *Node) string {
+		return orDefault(n.prop(propResource), "(unnamed)") + "\x00" + n.Path
+	})
+	out := make([]api.TreeNode, 0, len(keys))
+	for _, key := range keys {
+		members := groups[key]
+		label := clicky.Text(orDefault(members[0].prop(propResource), "(unnamed)"), "font-bold text-cyan-600")
+		if sp := shortPath(members[0].Path); sp != "" {
+			label = label.Space().Append("("+sp+")", "font-mono text-muted")
 		}
-		if _, seen := byKind[kind]; !seen {
-			kinds = append(kinds, kind)
+		node := &displayNode{text: label}
+		for _, leaf := range sortedNodes(members) {
+			node.children = append(node.children, &displayNode{text: k8sLeafText(leaf)})
 		}
-		byKind[kind] = append(byKind[kind], leaf)
-	}
-	sort.Strings(kinds)
-
-	out := make([]api.TreeNode, 0, len(kinds))
-	for _, kind := range kinds {
-		kindNode := &displayNode{text: clicky.Text(kind, "text-muted")}
-		for _, leaf := range byKind[kind] {
-			kindNode.children = append(kindNode.children, &displayNode{text: k8sLeafText(leaf)})
-		}
-		out = append(out, kindNode)
+		out = append(out, node)
 	}
 	return out
 }
@@ -125,27 +128,44 @@ func k8sLeafText(node *Node) api.Text {
 	if node.Version != "" {
 		t = t.Append("@"+node.Version, "font-mono text-muted")
 	}
-	if loc := k8sLeafLocation(node); loc != "" {
-		t = t.Space().Append("("+loc+")", "text-muted")
+	if container := node.prop(propContainer); container != "" {
+		t = t.Space().Append("("+container+")", "text-muted")
 	}
-	t = appendTags(t, statusTags(node))
-	if node.Path != "" {
-		t = t.Space().Append(node.Path, "font-mono text-muted")
-	}
-	return t
+	return appendTags(t, statusTags(node))
 }
 
-func k8sLeafLocation(node *Node) string {
-	resource := node.prop(propResource)
-	container := node.prop(propContainer)
-	switch {
-	case resource != "" && container != "":
-		return resource + "/" + container
-	case resource != "":
-		return resource
-	default:
-		return container
+// groupLeaves buckets leaves by key, returning the keys in sorted order.
+func groupLeaves(leaves []*Node, key func(*Node) string) ([]string, map[string][]*Node) {
+	groups := map[string][]*Node{}
+	var keys []string
+	for _, leaf := range leaves {
+		k := key(leaf)
+		if _, seen := groups[k]; !seen {
+			keys = append(keys, k)
+		}
+		groups[k] = append(groups[k], leaf)
 	}
+	sort.Strings(keys)
+	return keys, groups
+}
+
+func orDefault(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func shortPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	path = filepath.ToSlash(path)
+	parts := strings.Split(path, "/")
+	if len(parts) <= 2 {
+		return path
+	}
+	return strings.Join(parts[len(parts)-2:], "/")
 }
 
 func relDisplayPath(base, path string) string {
