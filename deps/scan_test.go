@@ -104,6 +104,7 @@ func TestFlatExportPretty(t *testing.T) {
 		Nodes: []FlatNode{
 			{ID: "go:github.com/acme/app", Name: "github.com/acme/app", Manager: ManagerGo, Depth: 0},
 			{ID: "go:github.com/acme/lib@v1.2.3", Name: "github.com/acme/lib", Version: "v1.2.3", Manager: ManagerGo, Scope: "require", Direct: true, Depth: 1},
+			{ID: "go:github.com/acme/dep@v0.1.0", Name: "github.com/acme/dep", Version: "v0.1.0", Manager: ManagerGo, Scope: "indirect", Depth: 2},
 		},
 	}
 	got := export.Pretty().String()
@@ -113,8 +114,12 @@ func TestFlatExportPretty(t *testing.T) {
 	if !strings.Contains(got, "depth=1") {
 		t.Fatalf("flat pretty missing depth marker: %q", got)
 	}
-	if !strings.Contains(got, "direct") {
-		t.Fatalf("flat pretty missing direct tag: %q", got)
+	libLine := prettyLine(got, "github.com/acme/lib@v1.2.3")
+	if strings.Contains(libLine, "(direct") || strings.Contains(libLine, "require") {
+		t.Fatalf("default direct/require node should carry no scope tag: %q", libLine)
+	}
+	if !strings.Contains(prettyLine(got, "github.com/acme/dep@v0.1.0"), "indirect") {
+		t.Fatalf("flat pretty should keep indirect tag: %q", got)
 	}
 }
 

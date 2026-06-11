@@ -70,6 +70,10 @@ func nodeForImageTarget(target imageupdate.UpdateTarget, manager Manager) *Node 
 	node.Scope = updateTargetScope(target)
 	node.Source = imageTargetSource(target)
 	node.Path = filepath.ToSlash(target.File)
+	node.setProp(propNamespace, target.Ref.Namespace)
+	node.setProp(propKind, target.Ref.Kind)
+	node.setProp(propResource, target.Ref.Name)
+	node.setProp(propContainer, target.ContainerName)
 	return node
 }
 
