@@ -261,5 +261,8 @@ func applyImageTargetUpdate(ctx context.Context, candidate UpdateCandidate, vers
 		return plan
 	}
 	plan.Written = !opts.DryRun
+	if plan.Written {
+		stageUpdatePlan(ctx, &plan, candidate, opts.Runner)
+	}
 	return plan
 }

@@ -68,7 +68,8 @@ The required expr argument uses commons MatchItem syntax and is matched against
 dependency names, manager-qualified names, versions, and scopes. Manifest path
 matching is explicit with path:<pattern> or file:<pattern>. Matched direct
 dependencies are resolved to published versions, then repomap prompts for which
-dependencies and versions to apply.
+dependencies and versions to apply. Applied updates are staged with git add
+(manifests plus lockfiles); --dry-run and --check never stage.
 
 Use --check to list updateable dependencies without prompting or writing.
 
