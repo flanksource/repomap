@@ -78,6 +78,8 @@ type UpdatePlan struct {
 	DryRun     bool     `json:"dry_run"`
 	Checked    bool     `json:"checked,omitempty"`
 	Skipped    string   `json:"skipped,omitempty"`
+	Staged     []string `json:"staged,omitempty"`
+	StageError string   `json:"stage_error,omitempty"`
 }
 
 func Update(ctx context.Context, path string, opts UpdateOptions) ([]UpdatePlan, error) {
@@ -490,7 +492,16 @@ func applyDependencyUpdate(ctx context.Context, candidate UpdateCandidate, versi
 		return plan
 	}
 	plan.Written = true
+	stageUpdatePlan(ctx, &plan, candidate, runner)
 	return plan
+}
+
+func stageUpdatePlan(ctx context.Context, plan *UpdatePlan, candidate UpdateCandidate, runner CommandRunner) {
+	staged, err := stageUpdatedFiles(ctx, runner, candidate)
+	plan.Staged = staged
+	if err != nil {
+		plan.StageError = err.Error()
+	}
 }
 
 func updateCommand(candidate UpdateCandidate, version string) (Command, error) {
@@ -618,6 +629,12 @@ func (p UpdatePlan) Pretty() api.Text {
 	case p.Written:
 		t = t.Space().Append("written", "text-green-600")
 	}
+	if len(p.Staged) > 0 {
+		t = t.Space().Append("staged "+strings.Join(p.Staged, ", "), "text-muted")
+	}
+	if p.StageError != "" {
+		t = t.Space().Append("stage failed: "+p.StageError, "text-yellow-600")
+	}
 	return t
 }
 
@@ -648,7 +665,14 @@ func (p UpdatePlan) Row() map[string]any {
 	case p.DryRun:
 		row["status"] = clicky.Text("dry-run", "text-yellow-600")
 	case p.Written:
-		row["status"] = clicky.Text("written", "text-green-600")
+		status := clicky.Text("written", "text-green-600")
+		if len(p.Staged) > 0 {
+			status = status.Append(" + staged "+strings.Join(p.Staged, ", "), "text-muted")
+		}
+		if p.StageError != "" {
+			status = status.Append(" (stage failed: "+p.StageError+")", "text-yellow-600")
+		}
+		row["status"] = status
 	default:
 		row["status"] = clicky.Text("")
 	}

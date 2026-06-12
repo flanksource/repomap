@@ -334,6 +334,153 @@ func TestUpdateImageDryRunUsesImageVersionResolver(t *testing.T) {
 	}
 }
 
+func TestUpdateStagesChangedFilesAfterWrite(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, filepath.Join(dir, "package.json"), `{
+  "name": "web",
+  "dependencies": {"left-pad": "^1.3.0"}
+}`)
+	writeFile(t, filepath.Join(dir, "package-lock.json"), `{"lockfileVersion": 3}`)
+	runner := &updateFakeRunner{
+		responses: map[string]CommandResult{
+			"npm view left-pad versions --json":                                           {Stdout: `["1.4.0","1.3.0"]`},
+			"npm install --package-lock-only --ignore-scripts --save-prod left-pad@1.4.0": {},
+			"git add -- package-lock.json package.json":                                   {},
+		},
+	}
+	plans, err := Update(context.Background(), dir, UpdateOptions{
+		Managers:   []Manager{ManagerNPM},
+		Expression: []string{"left-pad"},
+		Runner:     runner,
+		SelectCandidates: func(choices []UpdateChoice) ([]UpdateChoice, bool) {
+			return choices, true
+		},
+		SelectVersion: func(UpdateChoice) (string, bool) {
+			return "1.4.0", true
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 || !plans[0].Written {
+		t.Fatalf("plans = %#v, want one written plan", plans)
+	}
+	if strings.Join(plans[0].Staged, ",") != "package-lock.json,package.json" {
+		t.Fatalf("staged = %#v, want package-lock.json,package.json", plans[0].Staged)
+	}
+	if plans[0].StageError != "" {
+		t.Fatalf("unexpected stage error: %q", plans[0].StageError)
+	}
+	var gitAdd *Command
+	for i := range runner.commands {
+		if runner.commands[i].Name == "git" {
+			gitAdd = &runner.commands[i]
+		}
+	}
+	if gitAdd == nil {
+		t.Fatalf("expected a git add command, got %#v", runner.commands)
+	}
+	if gitAdd.Dir != dir {
+		t.Fatalf("git add dir = %q, want %q", gitAdd.Dir, dir)
+	}
+	if strings.Join(gitAdd.Args, " ") != "add -- package-lock.json package.json" {
+		t.Fatalf("git add args = %q", strings.Join(gitAdd.Args, " "))
+	}
+}
+
+func TestUpdateDryRunDoesNotStage(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "package.json"), `{
+  "name": "web",
+  "dependencies": {"left-pad": "^1.3.0"}
+}`)
+	writeFile(t, filepath.Join(dir, "package-lock.json"), `{"lockfileVersion": 3}`)
+	runner := &updateFakeRunner{
+		responses: map[string]CommandResult{
+			"npm view left-pad versions --json": {Stdout: `["1.4.0","1.3.0"]`},
+		},
+	}
+	plans, err := Update(context.Background(), dir, UpdateOptions{
+		Managers:   []Manager{ManagerNPM},
+		Expression: []string{"left-pad"},
+		DryRun:     true,
+		Runner:     runner,
+		SelectCandidates: func(choices []UpdateChoice) ([]UpdateChoice, bool) {
+			return choices, true
+		},
+		SelectVersion: func(UpdateChoice) (string, bool) {
+			return "1.4.0", true
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 || len(plans[0].Staged) != 0 {
+		t.Fatalf("dry-run must not stage files: %#v", plans)
+	}
+	for _, cmd := range runner.commands {
+		if cmd.Name == "git" {
+			t.Fatalf("dry-run must not run git add, got %#v", cmd)
+		}
+	}
+}
+
+func TestUpdatedRepoFilesByManager(t *testing.T) {
+	cases := []struct {
+		candidate UpdateCandidate
+		want      string
+	}{
+		{UpdateCandidate{Manager: ManagerGo}, "go.mod,go.sum"},
+		{UpdateCandidate{Manager: ManagerNPM}, "package.json,package-lock.json"},
+		{UpdateCandidate{Manager: ManagerPNPM}, "package.json,pnpm-lock.yaml"},
+		{UpdateCandidate{Manager: ManagerImage, Target: &imageupdate.UpdateTarget{File: "apps/workloads.yaml"}}, "apps/workloads.yaml"},
+		{UpdateCandidate{Manager: ManagerImage}, ""},
+	}
+	for _, tc := range cases {
+		if got := strings.Join(updatedRepoFiles(tc.candidate), ","); got != tc.want {
+			t.Fatalf("updatedRepoFiles(%s) = %q, want %q", tc.candidate.Manager, got, tc.want)
+		}
+	}
+}
+
+func TestUpdateImageStagesEditedManifest(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	runGit(t, dir, "init")
+	writeFile(t, filepath.Join(dir, "apps", "workloads.yaml"), deploymentUpdateFixture)
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init")
+
+	plans, err := Update(context.Background(), ".", UpdateOptions{
+		Managers:      []Manager{ManagerImage},
+		Expression:    []string{"*nginx*"},
+		ImageResolver: fakeImageVersionResolver{"nginx": []string{"1.27.0", "1.25.3"}},
+		SelectCandidates: func(choices []UpdateChoice) ([]UpdateChoice, bool) {
+			return choices, true
+		},
+		SelectVersion: func(UpdateChoice) (string, bool) {
+			return "1.27.0", true
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 || !plans[0].Written {
+		t.Fatalf("plans = %#v, want one written image plan", plans)
+	}
+	if strings.Join(plans[0].Staged, ",") != "apps/workloads.yaml" || plans[0].StageError != "" {
+		t.Fatalf("unexpected staging result: staged=%#v err=%q", plans[0].Staged, plans[0].StageError)
+	}
+	staged, err := runGitCmd(context.Background(), dir, "diff", "--name-only", "--cached")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(staged) != "apps/workloads.yaml" {
+		t.Fatalf("git staged files = %q, want apps/workloads.yaml", strings.TrimSpace(staged))
+	}
+}
+
 func TestGroupUpdateChoicesByFile(t *testing.T) {
 	choices := []UpdateChoice{
 		{Candidate: UpdateCandidate{Manager: ManagerNPM, Name: "zeta", File: "/repo/web/package.json", Scope: "dependencies"}},
