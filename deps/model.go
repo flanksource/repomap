@@ -27,6 +27,7 @@ type Options struct {
 	Filters         []string
 	Flat            bool
 	IncludeIndirect bool
+	ShowDuplicates  bool
 	Runner          CommandRunner
 	Now             func() time.Time
 }
@@ -57,26 +58,29 @@ type Metadata struct {
 	Filter          []string  `json:"filter,omitempty"`
 	MaxDepth        int       `json:"max_depth,omitempty"`
 	Flat            bool      `json:"flat,omitempty"`
+	ShowDuplicates  bool      `json:"show_duplicates,omitempty"`
 	ProjectsScanned int       `json:"projects_scanned"`
 }
 
 type Node struct {
-	ID         string  `json:"id"`
-	Name       string  `json:"name"`
-	Version    string  `json:"version,omitempty"`
-	Manager    Manager `json:"manager"`
-	Scope      string  `json:"scope,omitempty"`
-	Source     string  `json:"source,omitempty"`
-	Path       string  `json:"path,omitempty"`
-	Direct     bool    `json:"direct,omitempty"`
-	Dev        bool    `json:"dev,omitempty"`
-	Optional   bool    `json:"optional,omitempty"`
-	Local      bool    `json:"local,omitempty"`
-	Depth      int     `json:"depth"`
-	Circular   bool    `json:"circular,omitempty"`
-	Duplicate  *DupRef `json:"duplicate,omitempty"`
-	Children   []*Node `json:"children,omitempty"`
-	properties map[string]string
+	ID               string  `json:"id"`
+	Name             string  `json:"name"`
+	Version          string  `json:"version,omitempty"`
+	Manager          Manager `json:"manager"`
+	Scope            string  `json:"scope,omitempty"`
+	Source           string  `json:"source,omitempty"`
+	Path             string  `json:"path,omitempty"`
+	Direct           bool    `json:"direct,omitempty"`
+	Dev              bool    `json:"dev,omitempty"`
+	Optional         bool    `json:"optional,omitempty"`
+	Local            bool    `json:"local,omitempty"`
+	Depth            int     `json:"depth"`
+	Circular         bool    `json:"circular,omitempty"`
+	Duplicate        *DupRef `json:"duplicate,omitempty"`
+	OtherParents     int     `json:"other_parents,omitempty"`
+	HiddenDuplicates int     `json:"hidden_duplicates,omitempty"`
+	Children         []*Node `json:"children,omitempty"`
+	properties       map[string]string
 }
 
 type FlatNode struct {

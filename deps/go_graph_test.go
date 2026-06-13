@@ -116,6 +116,92 @@ require github.com/acme/lib v1.2.3
 	}
 }
 
+// goDiamondScan resolves a go module whose two direct dependencies both require
+// the same transitive dep, exercising the collapse pass end-to-end.
+func goDiamondScan(t *testing.T, opts Options) *Export {
+	t.Helper()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), `module github.com/acme/app
+
+go 1.22
+
+require (
+	github.com/acme/lib v1.0.0
+	github.com/acme/other v1.0.0
+)
+`)
+	opts.Managers = []Manager{ManagerGo}
+	opts.MaxDepth = 0
+	opts.Runner = &fakeRunner{result: CommandResult{Stdout: strings.Join([]string{
+		"github.com/acme/app github.com/acme/lib@v1.0.0",
+		"github.com/acme/app github.com/acme/other@v1.0.0",
+		"github.com/acme/lib@v1.0.0 github.com/acme/dep@v0.1.0",
+		"github.com/acme/other@v1.0.0 github.com/acme/dep@v0.1.0",
+		"",
+	}, "\n")}}
+	opts.Now = func() time.Time { return time.Unix(1, 0).UTC() }
+	got, err := Scan(context.Background(), dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func TestScanCollapsesDuplicatesByDefault(t *testing.T) {
+	got := goDiamondScan(t, Options{})
+	root := got.Roots[0]
+	lib := findChild(root, "github.com/acme/lib")
+	other := findChild(root, "github.com/acme/other")
+
+	depUnderLib := findChild(lib, "github.com/acme/dep")
+	depUnderOther := findChild(other, "github.com/acme/dep")
+	if (depUnderLib == nil) == (depUnderOther == nil) {
+		t.Fatalf("dep should render under exactly one parent, lib=%v other=%v", depUnderLib != nil, depUnderOther != nil)
+	}
+	resolved, hiddenParent := depUnderLib, other
+	if depUnderLib == nil {
+		resolved, hiddenParent = depUnderOther, lib
+	}
+	if resolved.OtherParents != 1 {
+		t.Fatalf("resolved dep should record 1 other parent, got %d", resolved.OtherParents)
+	}
+	if hiddenParent.HiddenDuplicates != 1 {
+		t.Fatalf("the parent that lost dep should hide 1 duplicate, got %d", hiddenParent.HiddenDuplicates)
+	}
+}
+
+func TestScanShowDuplicatesRendersEveryOccurrence(t *testing.T) {
+	got := goDiamondScan(t, Options{ShowDuplicates: true})
+	root := got.Roots[0]
+	lib := findChild(root, "github.com/acme/lib")
+	other := findChild(root, "github.com/acme/other")
+	if findChild(lib, "github.com/acme/dep") == nil || findChild(other, "github.com/acme/dep") == nil {
+		t.Fatalf("--show-duplicates should keep dep under both parents")
+	}
+	if !got.Metadata.ShowDuplicates {
+		t.Fatalf("metadata should record show_duplicates")
+	}
+}
+
+func TestScanFlatStaysFullGraph(t *testing.T) {
+	collapsed := goDiamondScan(t, Options{})
+	flat := goDiamondScan(t, Options{Flat: true})
+	// The flat export counts every node once (dedup by id), independent of the
+	// tree collapse, so dep is present exactly once and edges cover both parents.
+	var depEdges int
+	for _, e := range flat.Edges {
+		if strings.HasSuffix(e.To, "acme/dep@v0.1.0") {
+			depEdges++
+		}
+	}
+	if depEdges != 2 {
+		t.Fatalf("flat edges should retain both parent→dep edges, got %d", depEdges)
+	}
+	if len(collapsed.Roots) == 0 || len(flat.Nodes) == 0 {
+		t.Fatalf("expected collapsed roots and flat nodes to be populated")
+	}
+}
+
 func TestScanGoDepthOneStaysOffline(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "go.mod"), `module github.com/acme/app

@@ -41,6 +41,10 @@ func CompareScan(ctx context.Context, path string, opts CompareOptions) (*Compar
 		return nil, err
 	}
 
+	// Diffs always compare the full graph: indexExport walks Roots, so collapsing
+	// duplicate subtrees would hide real dependency changes.
+	opts.ShowDuplicates = true
+
 	baseSha, err := resolveRef(ctx, repoRoot, opts.BaseRef)
 	if err != nil {
 		return nil, err

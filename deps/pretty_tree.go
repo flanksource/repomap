@@ -1,6 +1,7 @@
 package deps
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -57,21 +58,33 @@ func rootDisplayNode(root *Node, scanPath string) *displayNode {
 	if rel := relDisplayPath(scanPath, root.Path); rel != "" {
 		label = label.Space().Append(rel, "font-mono text-muted")
 	}
-	return &displayNode{text: label, children: packageDisplayNodes(root.Children)}
+	return &displayNode{text: label, children: packageChildNodes(root)}
 }
 
-// packageDisplayNodes renders dependency children without repeating the manager
-// prefix (the root already carries it).
-func packageDisplayNodes(nodes []*Node) []api.TreeNode {
-	sorted := sortedNodes(nodes)
-	out := make([]api.TreeNode, 0, len(sorted))
+// packageChildNodes renders dependency children without repeating the manager
+// prefix (the root already carries it) and, when duplicate occurrences were
+// collapsed away, appends a trailing marker counting them.
+func packageChildNodes(parent *Node) []api.TreeNode {
+	sorted := sortedNodes(parent.Children)
+	out := make([]api.TreeNode, 0, len(sorted)+1)
 	for _, n := range sorted {
 		out = append(out, &displayNode{
 			text:     nodeText(n, false),
-			children: packageDisplayNodes(n.Children),
+			children: packageChildNodes(n),
 		})
 	}
+	if parent.HiddenDuplicates > 0 {
+		out = append(out, &displayNode{text: hiddenDuplicatesText(parent.HiddenDuplicates)})
+	}
 	return out
+}
+
+func hiddenDuplicatesText(hidden int) api.Text {
+	noun := "dependencies"
+	if hidden == 1 {
+		noun = "dependency"
+	}
+	return clicky.Text(fmt.Sprintf("(and %d other %s)", hidden, noun), "text-muted italic")
 }
 
 // namespaceNodes is the top level of the kubernetes grouping.
