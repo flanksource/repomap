@@ -11,12 +11,13 @@ import (
 )
 
 type DepsOptions struct {
-	Path    string   `json:"path" args:"true" help:"Path to scan" default:"."`
-	Manager []string `json:"manager,omitempty" flag:"manager" help:"Dependency manager to include: go, maven, gradle, npm, pnpm, image/docker, helm (repeatable or comma-separated)"`
-	Depth          int      `json:"depth,omitempty" flag:"depth" default:"1" help:"Maximum dependency depth (1 = direct only, 0 = unlimited)"`
-	Filter         []string `json:"filter,omitempty" flag:"filter" help:"Dependency filter patterns matched against id, name, version, manager, source, or path; supports comma-separated values and !exclusions"`
-	Flat           bool     `json:"flat,omitempty" flag:"flat" help:"Export a flat node list with edges instead of the dependency tree"`
-	IncludeIndirect bool    `json:"include_indirect,omitempty" flag:"include-indirect" help:"Include Go indirect requirements in --depth 1 listings (ignored at other depths)"`
+	Path            string   `json:"path" args:"true" help:"Path to scan" default:"."`
+	Manager         []string `json:"manager,omitempty" flag:"manager" help:"Dependency manager to include: go, maven, gradle, npm, pnpm, image/docker, helm (repeatable or comma-separated)"`
+	Depth           int      `json:"depth,omitempty" flag:"depth" default:"1" help:"Maximum dependency depth (1 = direct only, 0 = unlimited)"`
+	Filter          []string `json:"filter,omitempty" flag:"filter" help:"Dependency filter patterns matched against id, name, version, manager, source, or path; supports comma-separated values and !exclusions"`
+	Flat            bool     `json:"flat,omitempty" flag:"flat" help:"Export a flat node list with edges instead of the dependency tree"`
+	IncludeIndirect bool     `json:"include_indirect,omitempty" flag:"include-indirect" help:"Include Go indirect requirements in --depth 1 listings (ignored at other depths)"`
+	ShowDuplicates  bool     `json:"show_duplicates,omitempty" flag:"show-duplicates" help:"Render every occurrence of duplicated dependencies instead of collapsing them to the resolved node"`
 }
 
 type DepsUpdateOptions struct {
@@ -51,12 +52,18 @@ JSON to stdout, for example:
 By default the JSON export contains the dependency tree under "roots". Use --flat
 to export a flat "nodes" list plus "edges" instead of the tree.
 
+Shared dependencies are collapsed to their resolved (shallowest) occurrence: the
+resolved node is tagged with the number of other parents and each parent that
+hid a duplicate shows a trailing count. Use --show-duplicates to render every
+occurrence instead.
+
 EXAMPLES:
   repomap deps
   repomap deps ./service --manager go
   repomap deps --manager npm,pnpm --depth 0
   repomap deps --manager go --depth 0 --flat --json
   repomap deps --manager go --include-indirect
+  repomap deps --depth 0 --manager go --show-duplicates
   repomap deps --manager image,helm ./clusters/prod
   repomap deps --filter 'github.com/flanksource/*,!*test*'`)
 }
@@ -111,6 +118,7 @@ func runDeps(ctx context.Context, opts DepsOptions) (*depgraph.Export, error) {
 		Filters:         splitCommaArgs(opts.Filter),
 		Flat:            opts.Flat,
 		IncludeIndirect: opts.IncludeIndirect,
+		ShowDuplicates:  opts.ShowDuplicates,
 	})
 }
 

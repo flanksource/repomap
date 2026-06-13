@@ -100,6 +100,7 @@ func Scan(ctx context.Context, path string, opts Options) (*Export, error) {
 			Filter:          opts.Filters,
 			MaxDepth:        opts.MaxDepth,
 			Flat:            opts.Flat,
+			ShowDuplicates:  opts.ShowDuplicates,
 			ProjectsScanned: projectsScanned,
 		},
 		Statistics: stats,
@@ -110,6 +111,9 @@ func Scan(ctx context.Context, path string, opts Options) (*Export, error) {
 		export.Nodes = nodes
 		export.Edges = edges
 	} else {
+		if !opts.ShowDuplicates {
+			collapseDuplicates(filteredRoots)
+		}
 		export.Roots = filteredRoots
 	}
 	return export, nil
