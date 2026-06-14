@@ -36,8 +36,8 @@ func dependencyDisplayTree(roots []*Node, scanPath string) (api.TextTree, bool) 
 		if root == nil {
 			continue
 		}
-		switch root.Manager {
-		case ManagerImage, ManagerHelm:
+		switch {
+		case (root.Manager == ManagerImage || root.Manager == ManagerHelm) && root.Source == "kubernetes manifests":
 			k8sLeaves = append(k8sLeaves, root.Children...)
 		default:
 			top = append(top, rootDisplayNode(root, scanPath))
@@ -58,19 +58,22 @@ func rootDisplayNode(root *Node, scanPath string) *displayNode {
 	if rel := relDisplayPath(scanPath, root.Path); rel != "" {
 		label = label.Space().Append(rel, "font-mono text-muted")
 	}
-	return &displayNode{text: label, children: packageChildNodes(root)}
+	// Chart roots mix helm subcharts with image dependencies, so their children
+	// keep a manager prefix; single-manager package roots omit it.
+	showChildManager := root.Source == "Chart.yaml"
+	return &displayNode{text: label, children: packageChildNodes(root, showChildManager)}
 }
 
-// packageChildNodes renders dependency children without repeating the manager
-// prefix (the root already carries it) and, when duplicate occurrences were
-// collapsed away, appends a trailing marker counting them.
-func packageChildNodes(parent *Node) []api.TreeNode {
+// packageChildNodes renders dependency children and, when duplicate occurrences
+// were collapsed away, appends a trailing marker counting them. showManager
+// keeps the manager prefix on children of roots that mix managers.
+func packageChildNodes(parent *Node, showManager bool) []api.TreeNode {
 	sorted := sortedNodes(parent.Children)
 	out := make([]api.TreeNode, 0, len(sorted)+1)
 	for _, n := range sorted {
 		out = append(out, &displayNode{
-			text:     nodeText(n, false),
-			children: packageChildNodes(n),
+			text:     nodeText(n, showManager),
+			children: packageChildNodes(n, showManager),
 		})
 	}
 	if parent.HiddenDuplicates > 0 {
