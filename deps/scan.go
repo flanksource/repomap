@@ -94,6 +94,17 @@ func Scan(ctx context.Context, path string, opts Options) (*Export, error) {
 	}
 	projectsScanned := len(projects) + imageRootCount(roots) + chartRootCount(roots)
 
+	// Remote recursion mirrors the transitive gate used by go/maven/gradle: at
+	// any depth other than 1, expand chart subcharts and image base images by
+	// fetching remote content. Failures degrade to warnings inside resolveRemote.
+	if opts.MaxDepth != 1 {
+		remoteWarnings, err := resolveRemote(ctx, roots, opts)
+		if err != nil {
+			return nil, err
+		}
+		warnings = append(warnings, remoteWarnings...)
+	}
+
 	filteredRoots := make([]*Node, 0, len(roots))
 	for _, root := range roots {
 		if filtered := filterAndPrune(root, opts.Filters, opts.MaxDepth); filtered != nil {
