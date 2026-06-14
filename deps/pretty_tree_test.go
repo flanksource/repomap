@@ -137,6 +137,7 @@ func imageTreeExport() *Export {
 	root := NewNode(ManagerImage, "container images", "")
 	root.Depth = 0
 	root.Path = "/abs/proj"
+	root.Source = "kubernetes manifests"
 
 	nginx := NewNode(ManagerImage, "nginx", "1.25.3")
 	nginx.Depth = 1

@@ -55,19 +55,35 @@ func Scan(ctx context.Context, path string, opts Options) (*Export, error) {
 		roots = append(roots, projectRoots...)
 	}
 
+	var imageErr error
 	if scanImages {
-		imageRoots, imageWarnings, err := discoverImageDependencyRoots(absPath, imageScanManagers(opts.Managers))
-		warnings = append(warnings, imageWarnings...)
-		if err != nil {
-			if len(roots) == 0 && packageErr != nil {
-				return nil, packageErr
-			}
-			if len(roots) == 0 {
-				return nil, err
-			}
-			warnings = append(warnings, Warning{Message: err.Error()})
+		// Chart-directory scanning is a filesystem walk and runs independently of
+		// the git-backed k8s-manifest discovery, so a chart dir outside a git repo
+		// still resolves its own subcharts and images.
+		chartRoots, chartWarnings, chartErr := discoverChartDependencyRoots(absPath, opts.Managers)
+		warnings = append(warnings, chartWarnings...)
+		if chartErr != nil {
+			return nil, chartErr
 		}
+		roots = append(roots, chartRoots...)
+
+		var imageRoots []*Node
+		var imageWarnings []Warning
+		imageRoots, imageWarnings, imageErr = discoverImageDependencyRoots(absPath, imageScanManagers(opts.Managers))
+		warnings = append(warnings, imageWarnings...)
 		roots = append(roots, imageRoots...)
+	}
+
+	// Image discovery errors (e.g. not a git repository) only matter when nothing
+	// else resolved; otherwise they degrade to a warning.
+	if imageErr != nil && len(roots) == 0 {
+		if packageErr != nil {
+			return nil, packageErr
+		}
+		return nil, imageErr
+	}
+	if imageErr != nil {
+		warnings = append(warnings, Warning{Message: imageErr.Error()})
 	}
 
 	if packageErr != nil && len(roots) == 0 {
@@ -76,7 +92,7 @@ func Scan(ctx context.Context, path string, opts Options) (*Export, error) {
 	if len(roots) == 0 {
 		return nil, fmt.Errorf("no dependency graphs resolved")
 	}
-	projectsScanned := len(projects) + imageRootCount(roots)
+	projectsScanned := len(projects) + imageRootCount(roots) + chartRootCount(roots)
 
 	filteredRoots := make([]*Node, 0, len(roots))
 	for _, root := range roots {
