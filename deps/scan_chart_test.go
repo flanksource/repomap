@@ -64,6 +64,7 @@ func TestScanChartSubchartDependencies(t *testing.T) {
 
 	got, err := Scan(context.Background(), dir, Options{
 		Managers: []Manager{ManagerHelm},
+		MaxDepth: 1, // offline: do not trigger remote recursion
 		Now:      func() time.Time { return time.Unix(1, 0).UTC() },
 	})
 	if err != nil {
@@ -99,6 +100,7 @@ func TestScanChartHelmOnlyExcludesImages(t *testing.T) {
 
 	got, err := Scan(context.Background(), dir, Options{
 		Managers: []Manager{ManagerHelm},
+		MaxDepth: 1, // offline: do not trigger remote recursion
 		Now:      func() time.Time { return time.Unix(1, 0).UTC() },
 	})
 	if err != nil {
@@ -117,6 +119,7 @@ func TestScanChartExtractsImagesFromValuesAndTemplates(t *testing.T) {
 
 	got, err := Scan(context.Background(), dir, Options{
 		Managers: []Manager{ManagerImage},
+		MaxDepth: 1, // offline: do not trigger remote recursion
 		Now:      func() time.Time { return time.Unix(1, 0).UTC() },
 	})
 	if err != nil {
@@ -161,6 +164,7 @@ func TestScanChartSkipsVendoredSubcharts(t *testing.T) {
 
 	got, err := Scan(context.Background(), dir, Options{
 		Managers: []Manager{ManagerHelm},
+		MaxDepth: 1, // offline: do not trigger remote recursion
 		Now:      func() time.Time { return time.Unix(1, 0).UTC() },
 	})
 	if err != nil {
