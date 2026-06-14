@@ -160,6 +160,7 @@ func TestScanImageAndHelmManifestTargets(t *testing.T) {
 
 	got, err := Scan(context.Background(), ".", Options{
 		Managers: []Manager{ManagerImage, ManagerHelm},
+		MaxDepth: 1, // offline: do not trigger remote recursion
 		Now:      func() time.Time { return time.Unix(1, 0).UTC() },
 	})
 	if err != nil {

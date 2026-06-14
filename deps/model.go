@@ -30,6 +30,9 @@ type Options struct {
 	ShowDuplicates  bool
 	Runner          CommandRunner
 	Now             func() time.Time
+	// remote injects a pre-built remote resolver (cache + chart/image resolvers)
+	// for tests; nil in production, where Scan builds a disk-backed one.
+	remote *remoteDeps
 }
 
 type Project struct {

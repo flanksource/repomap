@@ -44,6 +44,12 @@ by shelling out to the package manager (go mod graph, mvn dependency:tree,
 gradle dependencies). The tool must be installed; rerun with --depth 1 for
 offline direct-only output.
 
+For Helm charts and container images, --depth other than 1 additionally recurses
+into remote dependencies: subcharts are fetched from their Helm repositories and
+image base images are resolved from registry labels and Dockerfile FROM
+directives (cloning source repos). Fetches are cached under the user cache dir;
+failures degrade to warnings. Use --depth 1 to stay fully offline.
+
 The command uses the normal Clicky output flow. Use --json to write structured
 JSON to stdout, for example:
 
