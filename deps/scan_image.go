@@ -14,7 +14,7 @@ func discoverImageDependencyRoots(root string, managers []Manager) ([]*Node, []W
 	if err != nil {
 		return nil, nil, err
 	}
-	targets, sourceIndex, err := discoverImageTargets(conf, root)
+	res, err := imageupdate.DiscoverRepoTargets(conf, root)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -22,15 +22,13 @@ func discoverImageDependencyRoots(root string, managers []Manager) ([]*Node, []W
 	var imageChildren []*Node
 	var helmChildren []*Node
 	var warnings []Warning
-	for _, target := range targets {
+	for _, w := range res.Warnings {
+		warnings = append(warnings, Warning{Manager: ManagerHelm, Project: w.File, Message: w.Message})
+	}
+	for _, target := range res.Targets {
 		manager := managerForUpdateTarget(target)
 		if manager == "" || (len(selected) > 0 && !selected[manager]) {
 			continue
-		}
-		if target.Kind == imageupdate.TargetChart {
-			if err := sourceIndex.Resolve(&target); err != nil {
-				warnings = append(warnings, Warning{Manager: ManagerHelm, Project: target.File, Message: err.Error()})
-			}
 		}
 		node := nodeForImageTarget(target, manager)
 		switch manager {

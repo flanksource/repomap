@@ -3,37 +3,30 @@ package deps
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/flanksource/repomap"
 	"github.com/flanksource/repomap/imageupdate"
-	"github.com/flanksource/repomap/kubernetes"
 )
 
-func discoverImageUpdateCandidates(root string, managers []Manager) ([]UpdateCandidate, error) {
+func discoverImageUpdateCandidates(root string, managers []Manager, filter DiscoverFilter) ([]UpdateCandidate, error) {
 	selected := managerSet(managers)
 	conf, err := repomap.GetConf(root)
 	if err != nil {
 		return nil, err
 	}
-	targets, sourceIndex, err := discoverImageTargets(conf, root)
+	res, err := imageupdate.DiscoverRepoTargets(conf, root)
 	if err != nil {
 		return nil, err
 	}
+	targets := imageupdate.Filter(res.Targets, filter.Matcher, filter.ImagePatterns, filter.ChartPatterns)
 
 	var out []UpdateCandidate
 	for _, target := range targets {
 		manager := managerForUpdateTarget(target)
 		if manager == "" || !selected[manager] {
 			continue
-		}
-		if target.Kind == imageupdate.TargetChart {
-			if err := sourceIndex.Resolve(&target); err != nil {
-				return nil, err
-			}
 		}
 		targetCopy := target
 		out = append(out, UpdateCandidate{
@@ -47,80 +40,6 @@ func discoverImageUpdateCandidates(root string, managers []Manager) ([]UpdateCan
 		})
 	}
 	return out, nil
-}
-
-func discoverImageTargets(conf *repomap.ArchConf, scanPath string) ([]imageupdate.UpdateTarget, *imageupdate.SourceIndex, error) {
-	files, err := gitTrackedFiles(conf.RepoPath())
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to list files: %w", err)
-	}
-
-	var prefix string
-	if rel, err := filepath.Rel(conf.RepoPath(), scanPath); err == nil && rel != "." {
-		prefix = filepath.ToSlash(rel) + "/"
-	}
-
-	contents := map[string]string{}
-	for _, file := range files {
-		if !kubernetes.IsYaml(file) {
-			continue
-		}
-		content, err := conf.ReadFileWithFallback(file, "")
-		if err != nil || content == "" {
-			continue
-		}
-		contents[file] = content
-	}
-
-	tree := imageupdate.BuildKustomizeTree(contents)
-	sourceIndex := imageupdate.NewSourceIndex(tree)
-
-	keys := make([]string, 0, len(contents))
-	for file := range contents {
-		keys = append(keys, file)
-	}
-	sort.Strings(keys)
-
-	var targets []imageupdate.UpdateTarget
-	for _, file := range keys {
-		content := contents[file]
-		_ = sourceIndex.IndexHelmRepositories(file, content)
-		if prefix != "" && !strings.HasPrefix(file, prefix) {
-			continue
-		}
-		fileTargets, err := imageupdate.ExtractTargets(file, content)
-		if err != nil {
-			continue
-		}
-		targets = append(targets, fileTargets...)
-	}
-	sort.SliceStable(targets, func(i, j int) bool {
-		if targets[i].File != targets[j].File {
-			return targets[i].File < targets[j].File
-		}
-		if targets[i].FieldLine != targets[j].FieldLine {
-			return targets[i].FieldLine < targets[j].FieldLine
-		}
-		return updateTargetName(targets[i]) < updateTargetName(targets[j])
-	})
-	return targets, sourceIndex, nil
-}
-
-func gitTrackedFiles(repoPath string) ([]string, error) {
-	cmd := exec.Command("git", "-C", repoPath, "ls-files", "-z")
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, err
-	}
-	var files []string
-	for _, file := range strings.Split(string(out), "\x00") {
-		file = strings.TrimSpace(file)
-		if file != "" {
-			files = append(files, filepath.ToSlash(file))
-		}
-	}
-	sort.Strings(files)
-	return files, nil
 }
 
 func managerForUpdateTarget(target imageupdate.UpdateTarget) Manager {
@@ -142,7 +61,12 @@ func updateTargetName(target imageupdate.UpdateTarget) string {
 		}
 		return stripImageVersion(target.CurrentValue)
 	case imageupdate.TargetChart:
-		return target.ChartName
+		if target.ChartName != "" {
+			return target.ChartName
+		}
+		// Unresolved chartRef: fall back to the referenced source name so the
+		// candidate still has an identity and its lookup fails loudly by name.
+		return target.ChartRefName
 	default:
 		return target.CurrentValue
 	}

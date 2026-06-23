@@ -1,0 +1,46 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "generated_ts": 1782230638451,
+    "event_count": 2
+  },
+  "issues": [
+    {
+      "issue_id": "a701ab0f379f53c67a4006a29274b673",
+      "title": "Fix repomap update",
+      "state": "closed",
+      "labels": [
+        "priority:medium",
+        "session:0eee6b92-6966-4968-93a5-486b87b18e25"
+      ],
+      "assignees": [],
+      "created_ts": 1782228570737,
+      "updated_ts": 1782230638424,
+      "comment_count": 1
+    }
+  ],
+  "events": [
+    {
+      "event_id": "eebcf55cb0fa3528523dd496c0982c02289e77beb9a4fbf2be52ebee84108d22",
+      "issue_id": "a701ab0f379f53c67a4006a29274b673",
+      "actor": "b1f0880938c36f0a054030e48c354418",
+      "ts_unix_ms": 1782230638397,
+      "kind": {
+        "StateChanged": {
+          "state": "closed"
+        }
+      }
+    },
+    {
+      "event_id": "0654b3d43459dedc11799a46e7ba51943d4ea07f3ae0379f8e6d9d5a9c11aa90",
+      "issue_id": "a701ab0f379f53c67a4006a29274b673",
+      "actor": "b1f0880938c36f0a054030e48c354418",
+      "ts_unix_ms": 1782230638424,
+      "kind": {
+        "LabelRemoved": {
+          "label": "status:in_progress"
+        }
+      }
+    }
+  ]
+}
