@@ -38,7 +38,7 @@ replace github.com/acme/local => ../local
 }`)
 	writeFile(t, filepath.Join(dir, "pnpm-app", "pnpm-lock.yaml"), `lockfileVersion: '9.0'`)
 
-	got, err := DiscoverUpdateCandidates(dir, nil)
+	got, err := DiscoverUpdateCandidates(dir, nil, DiscoverFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ require github.com/acme/direct v1.2.3
 }`)
 	writeFile(t, filepath.Join(dir, "web", "package-lock.json"), `{"lockfileVersion": 3}`)
 
-	got, err := DiscoverUpdateCandidates(".", nil)
+	got, err := DiscoverUpdateCandidates(".", nil, DiscoverFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestDiscoverUpdateCandidates_ImageAndHelmTargets(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "apps", "helmrelease.yaml"), helmReleaseUpdateFixture)
 	runGit(t, dir, "add", ".")
 
-	got, err := DiscoverUpdateCandidates(".", []Manager{ManagerImage, ManagerHelm})
+	got, err := DiscoverUpdateCandidates(".", []Manager{ManagerImage, ManagerHelm}, DiscoverFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}

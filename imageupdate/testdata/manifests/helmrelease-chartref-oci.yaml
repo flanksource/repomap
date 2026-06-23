@@ -1,0 +1,19 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: podinfo
+  namespace: apps
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: podinfo
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: OCIRepository
+metadata:
+  name: podinfo
+  namespace: apps
+spec:
+  url: oci://ghcr.io/stefanprodan/charts/podinfo
+  ref:
+    tag: 6.5.0
