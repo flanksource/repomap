@@ -29,38 +29,56 @@ var appsV1Kinds = map[string]bool{
 // comment-only document, which would hide trailing HelmReleases/workloads. The
 // per-document line offset is added back so FieldLine stays absolute in the file.
 func ExtractTargets(file, content string) ([]UpdateTarget, error) {
-	docs, err := kubernetes.ParseYAMLDocuments(content)
+	var targets []UpdateTarget
+	err := forEachResourceDoc(content, func(d resourceDoc) {
+		switch {
+		case appsV1Kinds[d.ref.Kind]:
+			targets = append(targets, extractImages(file, d.ast, d.ref, d.m, d.offset)...)
+		case d.ref.Kind == "HelmRelease":
+			if t, ok := extractChart(file, d.ast, d.ref, d.m, d.offset); ok {
+				targets = append(targets, t)
+			}
+		}
+	})
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", file, err)
 	}
+	return targets, nil
+}
 
-	var targets []UpdateTarget
+// resourceDoc is a single Kubernetes resource document with both its decoded map
+// content and its single-document AST, plus the line offset that converts AST
+// line positions back to absolute file lines.
+type resourceDoc struct {
+	ref    kubernetes.KubernetesRef
+	m      map[string]interface{}
+	ast    *ast.DocumentNode
+	offset int
+}
+
+// forEachResourceDoc splits content into documents (line-based, so trailing docs
+// after a comment-only document survive), and yields each Kubernetes resource
+// with its decoded map and single-doc AST. Documents whose AST cannot be parsed
+// are skipped. Shared by target extraction and source indexing so both agree on
+// document boundaries and line numbers.
+func forEachResourceDoc(content string, fn func(resourceDoc)) error {
+	docs, err := kubernetes.ParseYAMLDocuments(content)
+	if err != nil {
+		return err
+	}
 	for _, d := range docs {
 		m := d.Content
 		if !kubernetes.IsKubernetesResource(m) {
 			continue
 		}
 		ref := kubernetes.ExtractKubernetesRef(kubernetes.YAMLDocument{StartLine: d.StartLine, Content: m})
-
-		// Parse just this document for accurate field line positions, then offset
-		// by the document's start line to get absolute file lines.
-		offset := d.StartLine - 1
 		astFile, err := parser.ParseBytes([]byte(docText(content, d)), 0)
 		if err != nil || len(astFile.Docs) == 0 {
 			continue
 		}
-		doc := astFile.Docs[0]
-
-		switch {
-		case appsV1Kinds[ref.Kind]:
-			targets = append(targets, extractImages(file, doc, ref, m, offset)...)
-		case ref.Kind == "HelmRelease":
-			if t, ok := extractChart(file, doc, ref, m, offset); ok {
-				targets = append(targets, t)
-			}
-		}
+		fn(resourceDoc{ref: ref, m: m, ast: astFile.Docs[0], offset: d.StartLine - 1})
 	}
-	return targets, nil
+	return nil
 }
 
 // docText returns the raw source lines of a single document (1-based inclusive
@@ -146,6 +164,14 @@ func containerList(m map[string]interface{}) []interface{} {
 
 func extractChart(file string, doc *ast.DocumentNode, ref kubernetes.KubernetesRef, m map[string]interface{}, offset int) (UpdateTarget, bool) {
 	spec, _ := m["spec"].(map[string]interface{})
+	if spec == nil {
+		return UpdateTarget{}, false
+	}
+	// Flux v2 spec.chartRef points at an OCIRepository/HelmChart that holds the
+	// version literal; emit a deferred target that Resolve redirects onto it.
+	if chartRef, ok := spec["chartRef"].(map[string]interface{}); ok {
+		return extractChartRef(file, ref, chartRef)
+	}
 	chart, _ := spec["chart"].(map[string]interface{})
 	chartSpec, _ := chart["spec"].(map[string]interface{})
 	if chartSpec == nil {

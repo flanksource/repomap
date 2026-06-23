@@ -41,4 +41,13 @@ type UpdateTarget struct {
 	SourceRefNamespace string `json:"source_ref_namespace,omitempty"`
 	RepoURL            string `json:"repo_url,omitempty"`
 	IsOCI              bool   `json:"oci,omitempty"`
+
+	// ChartRef* are set when a HelmRelease selects its chart via spec.chartRef
+	// (Flux v2) instead of the inline spec.chart.spec template. They name the
+	// referenced OCIRepository/HelmChart source; SourceIndex.Resolve redirects
+	// File/FieldLine/CurrentValue/RepoURL onto that object (where the version
+	// literal actually lives) so the edit lands in the right place.
+	ChartRefKind      string `json:"chart_ref_kind,omitempty"`
+	ChartRefName      string `json:"chart_ref_name,omitempty"`
+	ChartRefNamespace string `json:"chart_ref_namespace,omitempty"`
 }

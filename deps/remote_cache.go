@@ -60,12 +60,13 @@ type RemoteCache interface {
 }
 
 type diskCache struct {
-	root   string
-	now    func() time.Time
-	get    func(ctx context.Context, url string) ([]byte, error)
-	runner CommandRunner
-	labels labelResolver
-	group  singleflight.Group
+	root     string
+	now      func() time.Time
+	get      func(ctx context.Context, url string) ([]byte, error)
+	runner   CommandRunner
+	labels   labelResolver
+	helmAuth *helmCredentials
+	group    singleflight.Group
 }
 
 // newDiskCache builds the production cache rooted at os.UserCacheDir()/repomap.
@@ -78,7 +79,7 @@ func newDiskCache(now func() time.Time, runner CommandRunner, labels labelResolv
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("creating cache dir %s: %w", root, err)
 	}
-	c := &diskCache{root: root, now: now, runner: runner, labels: labels}
+	c := &diskCache{root: root, now: now, runner: runner, labels: labels, helmAuth: loadHelmCredentials()}
 	c.get = c.httpGet
 	return c, nil
 }
@@ -199,7 +200,9 @@ func (c *diskCache) httpGet(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	// Reuse the user's `helm repo add` login (basic auth / TLS) for matching repos.
+	client := c.helmAuth.authorize(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

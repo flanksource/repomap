@@ -8,7 +8,7 @@ import (
 func TestSourceIndex_ResolveHTTP(t *testing.T) {
 	content := readManifest(t, "helmrelease.yaml")
 	idx := NewSourceIndex(nil)
-	if err := idx.IndexHelmRepositories("helmrelease.yaml", content); err != nil {
+	if err := idx.IndexSources("helmrelease.yaml", content); err != nil {
 		t.Fatal(err)
 	}
 	targets, err := ExtractTargets("helmrelease.yaml", content)
@@ -30,7 +30,7 @@ func TestSourceIndex_ResolveHTTP(t *testing.T) {
 func TestSourceIndex_ResolveOCI(t *testing.T) {
 	content := readManifest(t, "helmrelease-oci.yaml")
 	idx := NewSourceIndex(nil)
-	if err := idx.IndexHelmRepositories("helmrelease-oci.yaml", content); err != nil {
+	if err := idx.IndexSources("helmrelease-oci.yaml", content); err != nil {
 		t.Fatal(err)
 	}
 	targets, _ := ExtractTargets("helmrelease-oci.yaml", content)
@@ -73,7 +73,7 @@ func TestSourceIndex_TreeDerivedNamespace(t *testing.T) {
 	kt := BuildKustomizeTree(files)
 	idx := NewSourceIndex(kt)
 	for f, content := range files {
-		if err := idx.IndexHelmRepositories(f, content); err != nil {
+		if err := idx.IndexSources(f, content); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -103,7 +103,7 @@ func TestSourceIndex_ControllerNamespaceFallback(t *testing.T) {
 	// Two sources with the SAME name in different namespaces.
 	repo := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmRepository\n" +
 		"metadata:\n  name: shared\n  namespace: flux-system\nspec:\n  url: oci://ghcr.io/acme/shared\n"
-	if err := idx.IndexHelmRepositories("sources.yaml", repo); err != nil {
+	if err := idx.IndexSources("sources.yaml", repo); err != nil {
 		t.Fatal(err)
 	}
 	tg := UpdateTarget{Kind: TargetChart, SourceRefName: "shared", SourceRefNamespace: "my-app"}
@@ -124,7 +124,7 @@ func TestSourceIndex_ControllerNamespaceFallback(t *testing.T) {
 func TestSourceIndex_CommentOnlyDocDoesNotDropTrailing(t *testing.T) {
 	content := readManifest(t, "flux-multidoc.yaml")
 	idx := NewSourceIndex(nil)
-	if err := idx.IndexHelmRepositories("flux.yaml", content); err != nil {
+	if err := idx.IndexSources("flux.yaml", content); err != nil {
 		t.Fatal(err)
 	}
 	tg := UpdateTarget{Kind: TargetChart, SourceRefName: "flanksource-ecr", SourceRefNamespace: "flux-system"}
@@ -144,8 +144,8 @@ func TestSourceIndex_AmbiguousNameFailsLoud(t *testing.T) {
 		"metadata:\n  name: dup\n  namespace: team-a\nspec:\n  url: https://a.example.com\n"
 	b := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmRepository\n" +
 		"metadata:\n  name: dup\n  namespace: team-b\nspec:\n  url: https://b.example.com\n"
-	_ = idx.IndexHelmRepositories("a.yaml", a)
-	_ = idx.IndexHelmRepositories("b.yaml", b)
+	_ = idx.IndexSources("a.yaml", a)
+	_ = idx.IndexSources("b.yaml", b)
 
 	tg := UpdateTarget{Kind: TargetChart, SourceRefName: "dup", SourceRefNamespace: "team-c"}
 	tg.Ref.Namespace = "team-c"

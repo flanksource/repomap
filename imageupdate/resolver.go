@@ -185,7 +185,12 @@ func registryImage(t UpdateTarget) *image.ContainerImage {
 	if t.Kind == TargetChart {
 		repo := strings.TrimPrefix(t.RepoURL, "oci://")
 		repo = strings.TrimSuffix(repo, "/")
-		return image.NewFromIdentifier(repo + "/" + t.ChartName)
+		// An OCIRepository URL already includes the chart path (ChartName empty);
+		// only append a separate chart name when one is set.
+		if t.ChartName != "" {
+			repo += "/" + t.ChartName
+		}
+		return image.NewFromIdentifier(repo)
 	}
 	if t.Image != nil {
 		return t.Image

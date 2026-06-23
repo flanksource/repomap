@@ -1,0 +1,29 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: app
+  namespace: apps
+spec:
+  chartRef:
+    kind: HelmChart
+    name: app-chart
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmChart
+metadata:
+  name: app-chart
+  namespace: apps
+spec:
+  chart: app
+  version: 1.2.0
+  sourceRef:
+    kind: HelmRepository
+    name: app-repo
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: app-repo
+  namespace: apps
+spec:
+  url: https://charts.example.com/app

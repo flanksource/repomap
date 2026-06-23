@@ -2,17 +2,27 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	scannerlog "github.com/argoproj-labs/argocd-image-updater/registry-scanner/pkg/log"
-	"github.com/flanksource/commons/collections"
 	"github.com/spf13/cobra"
 
 	"github.com/flanksource/repomap"
 	"github.com/flanksource/repomap/imageupdate"
-	"github.com/flanksource/repomap/kubernetes"
 )
+
+// versionOnly strips an image/chart current value down to its tag/version
+// (dropping any registry/repo prefix and digest suffix).
+func versionOnly(currentValue string) string {
+	if i := strings.LastIndex(currentValue, ":"); i >= 0 {
+		v := currentValue[i+1:]
+		if at := strings.Index(v, "@"); at >= 0 {
+			v = v[:at]
+		}
+		return v
+	}
+	return currentValue
+}
 
 // resolveConcurrency bounds how many registry/Helm version lookups run at once.
 const resolveConcurrency = 8
@@ -44,8 +54,9 @@ type imageFilterOptions struct {
 }
 
 // discoverAndFilter resolves the scan path, discovers every image/chart target
-// in the repo, and applies the shared resource + image/chart filters. It returns
-// the matching targets and the HelmRepository source index for chart resolution.
+// in the repo (via the shared imageupdate discovery, which also resolves chart
+// sources), and applies the shared resource + image/chart filters. It returns the
+// matching targets and the source index for chart resolution.
 func discoverAndFilter(opts imageFilterOptions) ([]imageupdate.UpdateTarget, *imageupdate.SourceIndex, *repomap.ArchConf, error) {
 	path, err := resolvePath(opts.Path)
 	if err != nil {
@@ -56,82 +67,12 @@ func discoverAndFilter(opts imageFilterOptions) ([]imageupdate.UpdateTarget, *im
 		return nil, nil, nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	targets, sourceIndex, err := discoverTargets(conf, path)
+	res, err := imageupdate.DiscoverRepoTargets(conf, path)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	matcher := repomap.NewResourceMatcher(opts.Kind, opts.Namespace, opts.Name, opts.Selector)
-	targets = filterTargets(targets, matcher, opts)
-	return targets, sourceIndex, conf, nil
-}
-
-// discoverTargets reads every tracked YAML file, builds the kustomize/Flux tree
-// so HelmRepository sources can be resolved through Kustomization namespace
-// transformers, indexes the HelmRepositories, and extracts update targets from
-// files under the scan prefix.
-func discoverTargets(conf *repomap.ArchConf, scanPath string) ([]imageupdate.UpdateTarget, *imageupdate.SourceIndex, error) {
-	files, err := gitListFiles(conf.RepoPath())
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to list files: %w", err)
-	}
-
-	var prefix string
-	if rel, err := filepath.Rel(conf.RepoPath(), scanPath); err == nil && rel != "." {
-		prefix = rel + string(filepath.Separator)
-	}
-
-	// Pass 0: read all tracked YAML (paths are repo-relative POSIX from git).
-	contents := map[string]string{}
-	for _, f := range files {
-		if !kubernetes.IsYaml(f) {
-			continue
-		}
-		content, err := conf.ReadFileWithFallback(f, "")
-		if err != nil {
-			continue
-		}
-		contents[f] = content
-	}
-
-	// Pass 1: build the kustomize/Flux tree and the HelmRepository index.
-	tree := imageupdate.BuildKustomizeTree(contents)
-	sourceIndex := imageupdate.NewSourceIndex(tree)
-
-	// Pass 2: index sources repo-wide; extract targets only under the scan prefix.
-	var targets []imageupdate.UpdateTarget
-	for f, content := range contents {
-		_ = sourceIndex.IndexHelmRepositories(f, content)
-
-		if prefix != "" && !strings.HasPrefix(f, prefix) {
-			continue
-		}
-		fileTargets, err := imageupdate.ExtractTargets(f, content)
-		if err != nil {
-			continue
-		}
-		targets = append(targets, fileTargets...)
-	}
-	return targets, sourceIndex, nil
-}
-
-func filterTargets(targets []imageupdate.UpdateTarget, matcher repomap.ResourceMatcher, opts imageFilterOptions) []imageupdate.UpdateTarget {
-	var out []imageupdate.UpdateTarget
-	for _, t := range targets {
-		if !matcher.MatchesRef(t.Ref) {
-			continue
-		}
-		if t.Kind == imageupdate.TargetImage && len(opts.Image) > 0 {
-			if matched, _ := collections.MatchItem(t.Image.GetFullNameWithoutTag(), opts.Image...); !matched {
-				continue
-			}
-		}
-		if t.Kind == imageupdate.TargetChart && len(opts.Chart) > 0 {
-			if matched, _ := collections.MatchItem(t.ChartName, opts.Chart...); !matched {
-				continue
-			}
-		}
-		out = append(out, t)
-	}
-	return out
+	targets := imageupdate.Filter(res.Targets, matcher, opts.Image, opts.Chart)
+	return targets, res.Index, conf, nil
 }
