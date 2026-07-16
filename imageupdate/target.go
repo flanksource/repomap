@@ -1,10 +1,6 @@
 package imageupdate
 
-import (
-	"github.com/argoproj-labs/argocd-image-updater/registry-scanner/pkg/image"
-
-	"github.com/flanksource/repomap/kubernetes"
-)
+import "github.com/flanksource/repomap/kubernetes"
 
 // TargetKind distinguishes a container image update from a Helm chart version update.
 type TargetKind string
@@ -27,9 +23,9 @@ type UpdateTarget struct {
 	FieldJSONPath string                   `json:"field_path"`
 	CurrentValue  string                   `json:"current_value"`
 
-	// Image is set when Kind == TargetImage; parsed from CurrentValue via
-	// image.NewFromIdentifier so registry/name/tag/digest are decomposed.
-	Image *image.ContainerImage `json:"-"`
+	// Image is set when Kind == TargetImage and decomposes CurrentValue into its
+	// registry, repository, tag, and digest components.
+	Image *ContainerImage `json:"-"`
 
 	// ContainerName is the name of the container the image belongs to, used to
 	// disambiguate multi-container workloads in output and the --image filter.
