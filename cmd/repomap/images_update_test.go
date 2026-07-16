@@ -8,11 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/argoproj-labs/argocd-image-updater/registry-scanner/pkg/image"
-	"github.com/argoproj-labs/argocd-image-updater/registry-scanner/pkg/registry"
-	"github.com/argoproj-labs/argocd-image-updater/registry-scanner/pkg/registry/mocks"
-	"github.com/stretchr/testify/mock"
-
 	"github.com/flanksource/repomap"
 	"github.com/flanksource/repomap/imageupdate"
 )
@@ -30,12 +25,20 @@ spec:
           image: nginx:1.25.3 # keep me
 `
 
+type fakeRegistryClient struct{ tags []string }
+
+func (f fakeRegistryClient) Tags(context.Context) ([]string, error) {
+	return f.tags, nil
+}
+
+func (f fakeRegistryClient) Digest(context.Context, string) (string, error) {
+	return "", nil
+}
+
 func fakeImageResolver(tags []string) *imageupdate.Resolver {
 	return &imageupdate.Resolver{
-		NewRegistryClient: func(ctx context.Context, img *image.ContainerImage) (registry.RegistryClient, error) {
-			m := &mocks.RegistryClient{}
-			m.On("Tags", mock.Anything).Return(tags, nil)
-			return m, nil
+		NewRegistryClient: func(context.Context, *imageupdate.ContainerImage) (imageupdate.RegistryClient, error) {
+			return fakeRegistryClient{tags: tags}, nil
 		},
 	}
 }

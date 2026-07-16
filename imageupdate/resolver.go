@@ -6,20 +6,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/Masterminds/semver/v3"
-	"github.com/argoproj-labs/argocd-image-updater/registry-scanner/pkg/image"
-	"github.com/argoproj-labs/argocd-image-updater/registry-scanner/pkg/options"
-	"github.com/argoproj-labs/argocd-image-updater/registry-scanner/pkg/registry"
-	"github.com/argoproj-labs/argocd-image-updater/registry-scanner/pkg/tag"
 	"golang.org/x/sync/singleflight"
 )
-
-// RegistryClientFactory builds a ready-to-query registry client for an image
-// (with the repository already selected). Production wires registry-scanner;
-// tests inject a mock.
-type RegistryClientFactory func(ctx context.Context, img *image.ContainerImage) (registry.RegistryClient, error)
 
 // Resolver resolves available versions and the newest version for update
 // targets, dispatching images and OCI charts to a container registry and HTTP
@@ -47,8 +37,8 @@ type LatestVersions struct {
 	Prerelease string
 }
 
-// NewResolver returns a Resolver wired to live registry-scanner and HTTP Helm
-// index clients, authenticating against the local Docker credential store.
+// NewResolver returns a Resolver wired to live OCI registry and HTTP Helm index
+// clients, authenticating against the local Docker credential store.
 func NewResolver() *Resolver {
 	creds := NewKeychainResolver()
 	return &Resolver{
@@ -57,37 +47,12 @@ func NewResolver() *Resolver {
 	}
 }
 
-// liveRegistryClientFactory builds a registry client factory that resolves
-// credentials for each image's registry host via creds before connecting.
+// liveRegistryClientFactory keeps credential lookup and registry transport
+// behind the injectable client boundary used by the resolver.
 func liveRegistryClientFactory(creds CredentialResolver) RegistryClientFactory {
-	return func(ctx context.Context, img *image.ContainerImage) (registry.RegistryClient, error) {
-		ep, err := registry.GetRegistryEndpoint(ctx, img)
-		if err != nil {
-			return nil, err
-		}
-		user, pass, err := creds.Resolve(ctx, registryHostForImage(img, ep))
-		if err != nil {
-			return nil, err
-		}
-		client, err := registry.NewClient(ep, user, pass)
-		if err != nil {
-			return nil, err
-		}
-		if err := client.NewRepository(img.ImageName); err != nil {
-			return nil, fmt.Errorf("select repository %s: %w", img.ImageName, err)
-		}
-		return client, nil
+	return func(ctx context.Context, img *ContainerImage) (RegistryClient, error) {
+		return newRemoteRegistryClient(ctx, img, creds)
 	}
-}
-
-// registryHostForImage picks the host key used for credential lookup: the
-// image's registry URL when set, else the endpoint's prefix (which carries the
-// inferred host, e.g. docker.io).
-func registryHostForImage(img *image.ContainerImage, ep *registry.RegistryEndpoint) string {
-	if img.RegistryURL != "" {
-		return img.RegistryURL
-	}
-	return ep.RegistryPrefix
 }
 
 // Available returns every candidate version for a target, sorted newest-first.
@@ -181,16 +146,16 @@ func (r *Resolver) fetchVersions(ctx context.Context, t UpdateTarget) ([]string,
 // apps/v1 image it is the parsed image; for an OCI chart it is built from the
 // repository URL (oci://host/path) and chart name, since the chart's current
 // value is a version string, not an image reference.
-func registryImage(t UpdateTarget) *image.ContainerImage {
+func registryImage(t UpdateTarget) *ContainerImage {
 	if t.Kind == TargetChart {
 		repo := strings.TrimPrefix(t.RepoURL, "oci://")
 		repo = strings.TrimSuffix(repo, "/")
-		return image.NewFromIdentifier(repo + "/" + t.ChartName)
+		return NewContainerImage(repo + "/" + t.ChartName)
 	}
 	if t.Image != nil {
 		return t.Image
 	}
-	return image.NewFromIdentifier(t.CurrentValue)
+	return NewContainerImage(t.CurrentValue)
 }
 
 // NewImageValue composes the replacement string for an image target updated to
@@ -200,9 +165,9 @@ func registryImage(t UpdateTarget) *image.ContainerImage {
 func (r *Resolver) NewImageValue(ctx context.Context, t UpdateTarget, newTag string) (string, error) {
 	img := t.Image
 	if img == nil {
-		img = image.NewFromIdentifier(t.CurrentValue)
+		img = NewContainerImage(t.CurrentValue)
 	}
-	newImageTag := tag.NewImageTag(newTag, time.Time{}, "")
+	newImageTag := ImageTag{TagName: newTag}
 	if img.ImageTag != nil && img.ImageTag.TagDigest != "" {
 		digest, err := r.ResolveDigest(ctx, t, newTag)
 		if err != nil {
@@ -219,21 +184,17 @@ func (r *Resolver) NewImageValue(ctx context.Context, t UpdateTarget, newTag str
 func (r *Resolver) ResolveDigest(ctx context.Context, t UpdateTarget, newTag string) (string, error) {
 	img := t.Image
 	if img == nil {
-		img = image.NewFromIdentifier(t.CurrentValue)
+		img = NewContainerImage(t.CurrentValue)
 	}
 	client, err := r.NewRegistryClient(ctx, img)
 	if err != nil {
 		return "", err
 	}
-	manifest, err := client.ManifestForTag(ctx, newTag)
+	digest, err := client.Digest(ctx, newTag)
 	if err != nil {
-		return "", fmt.Errorf("manifest for %s:%s: %w", img.GetFullNameWithoutTag(), newTag, err)
+		return "", fmt.Errorf("digest for %s:%s: %w", img.GetFullNameWithoutTag(), newTag, err)
 	}
-	info, err := client.TagMetadata(ctx, manifest, options.NewManifestOptions())
-	if err != nil {
-		return "", fmt.Errorf("metadata for %s:%s: %w", img.GetFullNameWithoutTag(), newTag, err)
-	}
-	return info.EncodedDigest(), nil
+	return digest, nil
 }
 
 // sortSemverDesc returns versions that parse as semver, newest first. Tags that

@@ -1,15 +1,8 @@
 package imageupdate
 
-import (
-	"testing"
+import "testing"
 
-	"github.com/argoproj-labs/argocd-image-updater/registry-scanner/pkg/image"
-)
-
-// TestRegistryScannerWires confirms the registry-scanner dependency resolves and
-// links against repomap's module graph (k8s.io v0.36, distribution/v3, logrus).
-// It exercises the image-ref parser we rely on for tag/digest decomposition.
-func TestRegistryScannerWires(t *testing.T) {
+func TestContainerImageParsing(t *testing.T) {
 	cases := []struct {
 		identifier string
 		wantName   string
@@ -28,7 +21,7 @@ func TestRegistryScannerWires(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.identifier, func(t *testing.T) {
-			img := image.NewFromIdentifier(tc.identifier)
+			img := NewContainerImage(tc.identifier)
 			if img.ImageName != tc.wantName {
 				t.Errorf("ImageName = %q, want %q", img.ImageName, tc.wantName)
 			}

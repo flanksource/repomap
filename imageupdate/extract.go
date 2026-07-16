@@ -3,7 +3,6 @@ package imageupdate
 import (
 	"fmt"
 
-	"github.com/argoproj-labs/argocd-image-updater/registry-scanner/pkg/image"
 	"github.com/goccy/go-yaml"
 	"github.com/goccy/go-yaml/ast"
 	"github.com/goccy/go-yaml/parser"
@@ -129,7 +128,7 @@ func extractImages(file string, doc *ast.DocumentNode, ref kubernetes.Kubernetes
 			FieldLine:     line,
 			FieldJSONPath: path,
 			CurrentValue:  imageVal,
-			Image:         image.NewFromIdentifier(imageVal),
+			Image:         NewContainerImage(imageVal),
 			ContainerName: name,
 		})
 	}

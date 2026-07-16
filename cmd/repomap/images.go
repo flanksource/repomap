@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	scannerlog "github.com/argoproj-labs/argocd-image-updater/registry-scanner/pkg/log"
 	"github.com/flanksource/commons/collections"
 	"github.com/spf13/cobra"
 
@@ -26,8 +25,6 @@ var imagesCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(imagesCmd)
-	// Keep the registry-scanner client quiet; its debug logs are not useful here.
-	_ = scannerlog.SetLogLevel("warn")
 }
 
 // imageFilterOptions are the discovery filters shared by `images list` and
