@@ -50,4 +50,10 @@ type UpdateTarget struct {
 	ChartRefKind      string `json:"chart_ref_kind,omitempty"`
 	ChartRefName      string `json:"chart_ref_name,omitempty"`
 	ChartRefNamespace string `json:"chart_ref_namespace,omitempty"`
+
+	// SourceErr records why a chart target's Flux source could not be resolved
+	// (for example, the referenced HelmRepository is absent from the scanned
+	// manifests). When set, RepoURL is empty and version resolution must surface
+	// this actionable message instead of querying an empty URL.
+	SourceErr string `json:"source_error,omitempty"`
 }
