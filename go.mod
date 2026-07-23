@@ -6,7 +6,7 @@ require (
 	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/charmbracelet/bubbletea v1.3.10
-	github.com/flanksource/clicky v1.21.44
+	github.com/flanksource/clicky v1.21.45
 	github.com/flanksource/commons v1.53.1
 	github.com/ghodss/yaml v1.0.0
 	github.com/goccy/go-yaml v1.19.2
