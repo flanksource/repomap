@@ -12,13 +12,17 @@ import (
 )
 
 type DepsOptions struct {
-	Path            string   `json:"path" args:"true" help:"Path to scan" default:"."`
+	Path            string   `json:"path" args:"true" help:"Path to scan (defaults to current directory)"`
 	Manager         []string `json:"manager,omitempty" flag:"manager" help:"Dependency manager to include: go, maven, gradle, npm, pnpm, image/docker, helm (repeatable or comma-separated)"`
 	Depth           int      `json:"depth,omitempty" flag:"depth" default:"1" help:"Maximum dependency depth (1 = direct only, 0 = unlimited)"`
 	Filter          []string `json:"filter,omitempty" flag:"filter" help:"Dependency filter patterns matched against id, name, version, manager, source, or path; supports comma-separated values and !exclusions"`
+	Kind            []string `json:"kind,omitempty" flag:"kind,k" help:"Filter image/helm dependencies by Kubernetes kind, e.g. HelmRelease,Deployment (MatchItem syntax)"`
+	Namespace       []string `json:"namespace,omitempty" flag:"namespace,n" help:"Filter image/helm dependencies by namespace (MatchItem syntax)"`
+	Name            []string `json:"name,omitempty" flag:"name" help:"Filter image/helm dependencies by resource name (MatchItem syntax)"`
+	Selector        []string `json:"selector,omitempty" flag:"selector,l" help:"Filter image/helm dependencies by label selector, e.g. app=nginx"`
 	Flat            bool     `json:"flat,omitempty" flag:"flat" help:"Export a flat node list with edges instead of the dependency tree"`
 	IncludeIndirect bool     `json:"include_indirect,omitempty" flag:"include-indirect" help:"Include Go indirect requirements in --depth 1 listings (ignored at other depths)"`
-	ShowDuplicates  bool     `json:"show_duplicates,omitempty" flag:"show-duplicates" help:"Render every occurrence of duplicated dependencies instead of collapsing them to the resolved node"`
+	ShowDuplicates  bool     `json:"show_duplicates,omitempty" flag:"show-duplicates" help:"Render every occurrence of duplicated dependencies and report duplicates/conflicts (default: collapse to a single resolved node with no duplicate reporting)"`
 }
 
 type DepsUpdateOptions struct {
@@ -72,6 +76,12 @@ resolved node is tagged with the number of other parents and each parent that
 hid a duplicate shows a trailing count. Use --show-duplicates to render every
 occurrence instead.
 
+Image and Helm dependencies discovered from Kubernetes manifests can be narrowed
+by resource metadata with --kind/--namespace/--name/--selector (MatchItem
+syntax). These filters only match manifest-sourced targets; Chart.yaml chart
+directories have no Kubernetes metadata and are excluded whenever any of them is
+set.
+
 EXAMPLES:
   repomap deps
   repomap deps ./service --manager go
@@ -80,6 +90,7 @@ EXAMPLES:
   repomap deps --manager go --include-indirect
   repomap deps --depth 0 --manager go --show-duplicates
   repomap deps --manager image,helm ./clusters/prod
+  repomap deps --manager helm -k HelmRelease -n default
   repomap deps --filter 'github.com/flanksource/*,!*test*'`)
 }
 
@@ -138,6 +149,10 @@ func runDeps(ctx context.Context, opts DepsOptions) (*depgraph.Export, error) {
 		Managers:        managers,
 		MaxDepth:        opts.Depth,
 		Filters:         splitCommaArgs(opts.Filter),
+		Kind:            opts.Kind,
+		Namespace:       opts.Namespace,
+		Name:            opts.Name,
+		Selector:        opts.Selector,
 		Flat:            opts.Flat,
 		IncludeIndirect: opts.IncludeIndirect,
 		ShowDuplicates:  opts.ShowDuplicates,
