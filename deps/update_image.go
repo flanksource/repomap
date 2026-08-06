@@ -2,6 +2,7 @@ package deps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -133,6 +134,11 @@ func imageTagSeparator(value string) int {
 func availableImageTargetVersions(ctx context.Context, resolver ImageVersionResolver, candidate UpdateCandidate) ([]string, string, string, error) {
 	if candidate.Target == nil {
 		return nil, "", "", fmt.Errorf("%s has no image or Helm target metadata", candidate.Name)
+	}
+	// An unresolved Flux source leaves RepoURL empty; surface the actionable
+	// resolution error rather than querying an empty registry/Helm URL.
+	if candidate.Target.SourceErr != "" {
+		return nil, "", "", errors.New(candidate.Target.SourceErr)
 	}
 	if resolver == nil {
 		resolver = imageupdate.NewResolver()

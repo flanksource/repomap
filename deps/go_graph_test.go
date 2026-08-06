@@ -147,7 +147,7 @@ require (
 	return got
 }
 
-func TestScanCollapsesDuplicatesByDefault(t *testing.T) {
+func TestScanCollapsesDuplicatesSilentlyByDefault(t *testing.T) {
 	got := goDiamondScan(t, Options{})
 	root := got.Roots[0]
 	lib := findChild(root, "github.com/acme/lib")
@@ -158,15 +158,11 @@ func TestScanCollapsesDuplicatesByDefault(t *testing.T) {
 	if (depUnderLib == nil) == (depUnderOther == nil) {
 		t.Fatalf("dep should render under exactly one parent, lib=%v other=%v", depUnderLib != nil, depUnderOther != nil)
 	}
-	resolved, hiddenParent := depUnderLib, other
-	if depUnderLib == nil {
-		resolved, hiddenParent = depUnderOther, lib
+	if got.Statistics.Duplicates != 0 {
+		t.Fatalf("default scan should not count duplicates, got %d", got.Statistics.Duplicates)
 	}
-	if resolved.OtherParents != 1 {
-		t.Fatalf("resolved dep should record 1 other parent, got %d", resolved.OtherParents)
-	}
-	if hiddenParent.HiddenDuplicates != 1 {
-		t.Fatalf("the parent that lost dep should hide 1 duplicate, got %d", hiddenParent.HiddenDuplicates)
+	if len(got.Duplicates) != 0 {
+		t.Fatalf("default scan should not report a duplicates section, got %d", len(got.Duplicates))
 	}
 }
 
@@ -180,6 +176,12 @@ func TestScanShowDuplicatesRendersEveryOccurrence(t *testing.T) {
 	}
 	if !got.Metadata.ShowDuplicates {
 		t.Fatalf("metadata should record show_duplicates")
+	}
+	if got.Statistics.Duplicates == 0 {
+		t.Fatalf("--show-duplicates should count the shared dep as a duplicate")
+	}
+	if len(got.Duplicates) == 0 {
+		t.Fatalf("--show-duplicates should populate the duplicates section")
 	}
 }
 

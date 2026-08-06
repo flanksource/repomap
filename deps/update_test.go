@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/flanksource/repomap/imageupdate"
@@ -295,6 +296,52 @@ func TestDiscoverUpdateCandidates_ImageAndHelmTargets(t *testing.T) {
 	if helm == nil || helm.Current != "6.5.0" || helm.Target.RepoURL == "" {
 		t.Fatalf("helm candidate not resolved correctly: %#v", helm)
 	}
+}
+
+func TestUpdateHelmReleaseWithMissingSourceReportsClearError(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	runGit(t, dir, "init")
+	writeFile(t, filepath.Join(dir, "apps", "helmrelease.yaml"), helmReleaseMissingSourceFixture)
+	runGit(t, dir, "add", ".")
+
+	resolver := &recordingImageVersionResolver{}
+	plans, err := Update(context.Background(), ".", UpdateOptions{
+		Managers:      []Manager{ManagerHelm},
+		Check:         true,
+		ImageResolver: resolver,
+	})
+	if err != nil {
+		t.Fatalf("Update returned fatal error, want graceful per-chart skip: %v", err)
+	}
+	if len(plans) != 1 {
+		t.Fatalf("plans = %#v, want 1", plans)
+	}
+	if !strings.Contains(plans[0].Skipped, "HelmRepository flux-system/mission-control-oipa which was not found in the scanned manifests") {
+		t.Fatalf("skipped reason = %q, want the actionable HelmRepository-not-found error", plans[0].Skipped)
+	}
+	if resolver.calls.Load() != 0 {
+		t.Fatalf("resolver was queried %d times; an unresolved chart source must short-circuit before any lookup", resolver.calls.Load())
+	}
+}
+
+// recordingImageVersionResolver counts version lookups so a test can assert an
+// unresolved chart source short-circuits before any network query.
+type recordingImageVersionResolver struct{ calls atomic.Int64 }
+
+func (r *recordingImageVersionResolver) Available(context.Context, imageupdate.UpdateTarget) ([]string, error) {
+	r.calls.Add(1)
+	return nil, nil
+}
+
+func (r *recordingImageVersionResolver) ResolveLatestVersions(context.Context, imageupdate.UpdateTarget) (imageupdate.LatestVersions, error) {
+	r.calls.Add(1)
+	return imageupdate.LatestVersions{}, nil
+}
+
+func (r *recordingImageVersionResolver) NewImageValue(context.Context, imageupdate.UpdateTarget, string) (string, error) {
+	r.calls.Add(1)
+	return "", nil
 }
 
 func TestUpdateImageDryRunUsesImageVersionResolver(t *testing.T) {
@@ -614,6 +661,44 @@ func (fakeImageVersionResolver) NewImageValue(_ context.Context, target imageupd
 	return stripImageVersion(target.CurrentValue) + ":" + version, nil
 }
 
+// countingImageVersionResolver records how many times each target's published
+// versions are looked up, so tests can assert duplicate occurrences share a
+// single network round-trip.
+type countingImageVersionResolver struct {
+	versions map[string][]string
+	mu       sync.Mutex
+	calls    map[string]int
+}
+
+func newCountingImageVersionResolver(versions map[string][]string) *countingImageVersionResolver {
+	return &countingImageVersionResolver{versions: versions, calls: map[string]int{}}
+}
+
+func (r *countingImageVersionResolver) Available(_ context.Context, target imageupdate.UpdateTarget) ([]string, error) {
+	r.mu.Lock()
+	r.calls[updateTargetName(target)]++
+	r.mu.Unlock()
+	return sortDependencyVersions(r.versions[updateTargetName(target)]), nil
+}
+
+func (r *countingImageVersionResolver) ResolveLatestVersions(_ context.Context, target imageupdate.UpdateTarget) (imageupdate.LatestVersions, error) {
+	versions := sortDependencyVersions(r.versions[updateTargetName(target)])
+	return imageupdate.LatestVersions{
+		Stable:     latestStableVersion(versions),
+		Prerelease: latestPrereleaseVersion(versions),
+	}, nil
+}
+
+func (*countingImageVersionResolver) NewImageValue(_ context.Context, target imageupdate.UpdateTarget, version string) (string, error) {
+	return stripImageVersion(target.CurrentValue) + ":" + version, nil
+}
+
+func (r *countingImageVersionResolver) callCount(name string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls[name]
+}
+
 const deploymentUpdateFixture = `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -651,4 +736,21 @@ metadata:
   namespace: flux-system
 spec:
   url: https://stefanprodan.github.io/podinfo
+`
+
+// helmReleaseMissingSourceFixture references a HelmRepository that is absent from
+// the scanned manifests, mirroring the real mission-control-oipa breakage.
+const helmReleaseMissingSourceFixture = `apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: mission-control-oipa
+spec:
+  chart:
+    spec:
+      chart: mission-control-oipa-chart
+      version: 0.0.9
+      sourceRef:
+        kind: HelmRepository
+        name: mission-control-oipa
+        namespace: flux-system
 `

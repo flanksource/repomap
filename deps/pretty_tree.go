@@ -1,7 +1,6 @@
 package deps
 
 import (
-	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -64,30 +63,18 @@ func rootDisplayNode(root *Node, scanPath string) *displayNode {
 	return &displayNode{text: label, children: packageChildNodes(root, showChildManager)}
 }
 
-// packageChildNodes renders dependency children and, when duplicate occurrences
-// were collapsed away, appends a trailing marker counting them. showManager
-// keeps the manager prefix on children of roots that mix managers.
+// packageChildNodes renders dependency children. showManager keeps the manager
+// prefix on children of roots that mix managers.
 func packageChildNodes(parent *Node, showManager bool) []api.TreeNode {
 	sorted := sortedNodes(parent.Children)
-	out := make([]api.TreeNode, 0, len(sorted)+1)
+	out := make([]api.TreeNode, 0, len(sorted))
 	for _, n := range sorted {
 		out = append(out, &displayNode{
 			text:     nodeText(n, showManager),
 			children: packageChildNodes(n, showManager),
 		})
 	}
-	if parent.HiddenDuplicates > 0 {
-		out = append(out, &displayNode{text: hiddenDuplicatesText(parent.HiddenDuplicates)})
-	}
 	return out
-}
-
-func hiddenDuplicatesText(hidden int) api.Text {
-	noun := "dependencies"
-	if hidden == 1 {
-		noun = "dependency"
-	}
-	return clicky.Text(fmt.Sprintf("(and %d other %s)", hidden, noun), "text-muted italic")
 }
 
 // namespaceNodes is the top level of the kubernetes grouping.
