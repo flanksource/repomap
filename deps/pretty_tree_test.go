@@ -87,22 +87,26 @@ func TestTreeDropsDefaultScopeAndDirectTags(t *testing.T) {
 	}
 }
 
-func TestTreeShowsCollapseMarkers(t *testing.T) {
+func TestTreeCollapsesSilently(t *testing.T) {
 	root := diamondRoot()
 	root.Path = "/abs/proj/go.mod"
 	collapseDuplicates([]*Node{root})
 	out := (&Export{Metadata: Metadata{Path: "/abs/proj"}, Roots: []*Node{root}}).Pretty().String()
 
-	sharedLine := prettyLine(out, "github.com/acme/shared@v1.0.0")
-	if !strings.Contains(sharedLine, "+2 parents") {
-		t.Fatalf("resolved shared node should be tagged (+2 parents): %q", sharedLine)
+	var occurrences int
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "github.com/acme/shared@v1.0.0") {
+			occurrences++
+		}
 	}
-
-	if prettyLine(out, "and 1 other dependency)") == "" {
-		t.Fatalf("a parent that hid one duplicate should show the singular marker:\n%s", out)
+	if occurrences != 1 {
+		t.Fatalf("collapsed tree should render shared exactly once, got %d:\n%s", occurrences, out)
 	}
-	if strings.Contains(out, "and 1 other dependencies") {
-		t.Fatalf("singular hidden count must read 'dependency', not 'dependencies':\n%s", out)
+	if strings.Contains(out, "parent") {
+		t.Fatalf("collapsed tree must not carry parent-count markers:\n%s", out)
+	}
+	if strings.Contains(out, "other dependenc") {
+		t.Fatalf("collapsed tree must not carry hidden-duplicate markers:\n%s", out)
 	}
 }
 

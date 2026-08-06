@@ -1,6 +1,7 @@
 package deps
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 
@@ -8,7 +9,7 @@ import (
 	"github.com/flanksource/repomap/imageupdate"
 )
 
-func discoverImageDependencyRoots(root string, managers []Manager) ([]*Node, []Warning, error) {
+func discoverImageDependencyRoots(root string, managers []Manager, matcher repomap.ResourceMatcher) ([]*Node, []Warning, error) {
 	selected := managerSet(managers)
 	conf, err := repomap.GetConf(root)
 	if err != nil {
@@ -18,6 +19,10 @@ func discoverImageDependencyRoots(root string, managers []Manager) ([]*Node, []W
 	if err != nil {
 		return nil, nil, err
 	}
+	if res.UntrackedTarget != "" {
+		return nil, nil, fmt.Errorf("%s is not tracked by git; deps only scans git-tracked manifests — run 'git add %s' first", res.UntrackedTarget, res.UntrackedTarget)
+	}
+	targets := imageupdate.Filter(res.Targets, matcher, nil, nil)
 
 	var imageChildren []*Node
 	var helmChildren []*Node
@@ -25,7 +30,7 @@ func discoverImageDependencyRoots(root string, managers []Manager) ([]*Node, []W
 	for _, w := range res.Warnings {
 		warnings = append(warnings, Warning{Manager: ManagerHelm, Project: w.File, Message: w.Message})
 	}
-	for _, target := range res.Targets {
+	for _, target := range targets {
 		manager := managerForUpdateTarget(target)
 		if manager == "" || (len(selected) > 0 && !selected[manager]) {
 			continue

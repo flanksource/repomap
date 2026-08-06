@@ -42,26 +42,21 @@ func TestCollapseKeepsSharedDependencyOnce(t *testing.T) {
 	}
 }
 
-func TestCollapseMarksOtherParentsAndHiddenCounts(t *testing.T) {
+func TestCollapseDropsLaterSightingsSilently(t *testing.T) {
 	root := diamondRoot()
 	collapseDuplicates([]*Node{root})
 
 	a := findChild(root, "github.com/acme/a")
-	shared := findChild(a, "github.com/acme/shared")
-	if shared == nil {
+	if findChild(a, "github.com/acme/shared") == nil {
 		t.Fatalf("shared should be retained under the first sorted parent 'a'")
 	}
-	if shared.OtherParents != 2 {
-		t.Fatalf("resolved shared node should record 2 other parents, got %d", shared.OtherParents)
-	}
-
 	for _, name := range []string{"github.com/acme/b", "github.com/acme/c"} {
 		parent := findChild(root, name)
-		if parent.HiddenDuplicates != 1 {
-			t.Fatalf("parent %s should hide 1 duplicate, got %d", name, parent.HiddenDuplicates)
-		}
 		if findChild(parent, "github.com/acme/shared") != nil {
 			t.Fatalf("parent %s should no longer carry the shared dependency", name)
+		}
+		if len(parent.Children) != 0 {
+			t.Fatalf("parent %s should have no children after collapse, got %d", name, len(parent.Children))
 		}
 	}
 }
@@ -79,9 +74,6 @@ func TestCollapseLeavesImageRootsUntouched(t *testing.T) {
 	if len(root.Children) != 2 {
 		t.Fatalf("image roots must keep every occurrence, got %d children", len(root.Children))
 	}
-	if root.HiddenDuplicates != 0 {
-		t.Fatalf("image root should not record hidden duplicates, got %d", root.HiddenDuplicates)
-	}
 }
 
 func TestCollapseIsolatesPerRoot(t *testing.T) {
@@ -91,8 +83,13 @@ func TestCollapseIsolatesPerRoot(t *testing.T) {
 
 	for _, root := range []*Node{first, second} {
 		a := findChild(root, "github.com/acme/a")
-		if shared := findChild(a, "github.com/acme/shared"); shared == nil || shared.OtherParents != 2 {
-			t.Fatalf("each root should dedup independently with OtherParents=2")
+		if findChild(a, "github.com/acme/shared") == nil {
+			t.Fatalf("each root should retain shared under its first sorted parent")
+		}
+		for _, name := range []string{"github.com/acme/b", "github.com/acme/c"} {
+			if findChild(findChild(root, name), "github.com/acme/shared") != nil {
+				t.Fatalf("each root should dedup independently; %s should not keep shared", name)
+			}
 		}
 	}
 }

@@ -10,6 +10,8 @@ import (
 
 	"github.com/flanksource/clicky/task"
 	flanksourceContext "github.com/flanksource/commons/context"
+
+	"github.com/flanksource/repomap"
 )
 
 func Scan(ctx context.Context, path string, opts Options) (*Export, error) {
@@ -55,21 +57,28 @@ func Scan(ctx context.Context, path string, opts Options) (*Export, error) {
 		roots = append(roots, projectRoots...)
 	}
 
+	matcher := repomap.NewResourceMatcher(opts.Kind, opts.Namespace, opts.Name, opts.Selector)
+
 	var imageErr error
 	if scanImages {
 		// Chart-directory scanning is a filesystem walk and runs independently of
 		// the git-backed k8s-manifest discovery, so a chart dir outside a git repo
-		// still resolves its own subcharts and images.
-		chartRoots, chartWarnings, chartErr := discoverChartDependencyRoots(absPath, opts.Managers)
-		warnings = append(warnings, chartWarnings...)
-		if chartErr != nil {
-			return nil, chartErr
+		// still resolves its own subcharts and images. Chart.yaml roots carry no
+		// Kubernetes resource metadata, so a resource filter (kind/namespace/name/
+		// selector) can only be satisfied by manifest targets; skip chart dirs when
+		// one is active.
+		if matcher.IsEmpty() {
+			chartRoots, chartWarnings, chartErr := discoverChartDependencyRoots(absPath, opts.Managers)
+			warnings = append(warnings, chartWarnings...)
+			if chartErr != nil {
+				return nil, chartErr
+			}
+			roots = append(roots, chartRoots...)
 		}
-		roots = append(roots, chartRoots...)
 
 		var imageRoots []*Node
 		var imageWarnings []Warning
-		imageRoots, imageWarnings, imageErr = discoverImageDependencyRoots(absPath, imageScanManagers(opts.Managers))
+		imageRoots, imageWarnings, imageErr = discoverImageDependencyRoots(absPath, imageScanManagers(opts.Managers), matcher)
 		warnings = append(warnings, imageWarnings...)
 		roots = append(roots, imageRoots...)
 	}
@@ -111,8 +120,11 @@ func Scan(ctx context.Context, path string, opts Options) (*Export, error) {
 			filteredRoots = append(filteredRoots, filtered)
 		}
 	}
-	dups := analyzeDuplicates(filteredRoots)
-	applyDuplicateRefs(filteredRoots, dups)
+	var dups map[string]*Duplicate
+	if opts.ShowDuplicates {
+		dups = analyzeDuplicates(filteredRoots)
+		applyDuplicateRefs(filteredRoots, dups)
+	}
 	nodes, edges, stats := flatten(filteredRoots, dups)
 	stats.Projects = projectsScanned
 

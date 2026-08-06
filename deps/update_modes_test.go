@@ -137,6 +137,69 @@ func TestUpdate_ResourceFilterKindNarrowsToHelm(t *testing.T) {
 	}
 }
 
+func TestUpdate_DedupesVersionLookupsAcrossDuplicates(t *testing.T) {
+	setupImageRepo(t, map[string]string{
+		"apps/a.yaml": deploymentUpdateFixture,
+		"apps/b.yaml": deploymentUpdateFixture, // the same nginx + proxy in a second file
+	})
+	resolver := newCountingImageVersionResolver(map[string][]string{
+		"nginx":                     {"1.27.0", "1.25.3"},
+		"ghcr.io/flanksource/proxy": {"v0.5.0", "v0.4.1"},
+	})
+
+	plans, err := Update(context.Background(), ".", UpdateOptions{
+		Managers:      []Manager{ManagerImage},
+		Check:         true,
+		ImageResolver: resolver,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two images each appear in two files, so four updates are planned but each
+	// image's published versions must be looked up exactly once.
+	if len(plans) != 4 {
+		t.Fatalf("plans = %d, want 4 (two images × two files): %#v", len(plans), plans)
+	}
+	if got := resolver.callCount("nginx"); got != 1 {
+		t.Fatalf("nginx version lookups = %d, want 1 deduped lookup", got)
+	}
+	if got := resolver.callCount("ghcr.io/flanksource/proxy"); got != 1 {
+		t.Fatalf("proxy version lookups = %d, want 1 deduped lookup", got)
+	}
+}
+
+func TestUpdate_FilterThenChecksOnlyFilteredSet(t *testing.T) {
+	setupImageRepo(t, map[string]string{
+		"apps/workloads.yaml":   deploymentUpdateFixture,
+		"apps/helmrelease.yaml": helmReleaseUpdateFixture,
+	})
+	resolver := newCountingImageVersionResolver(map[string][]string{
+		"nginx":                     {"1.27.0", "1.25.3"},
+		"ghcr.io/flanksource/proxy": {"v0.5.0", "v0.4.1"},
+		"podinfo":                   {"6.6.0", "6.5.0"},
+	})
+
+	plans, err := Update(context.Background(), ".", UpdateOptions{
+		Managers:      []Manager{ManagerImage, ManagerHelm},
+		Kind:          []string{"HelmRelease"},
+		Check:         true,
+		ImageResolver: resolver,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 || plans[0].Manager != ManagerHelm || plans[0].Name != "podinfo" {
+		t.Fatalf("plans = %#v, want only the filtered HelmRelease chart", plans)
+	}
+	// The kind filter must restrict the lookups: Deployment images are never queried.
+	if got := resolver.callCount("nginx") + resolver.callCount("ghcr.io/flanksource/proxy"); got != 0 {
+		t.Fatalf("filtered-out image lookups = %d, want 0 (filter before check)", got)
+	}
+	if got := resolver.callCount("podinfo"); got != 1 {
+		t.Fatalf("podinfo lookups = %d, want 1", got)
+	}
+}
+
 func TestUpdate_NoExpressionMatchesAll(t *testing.T) {
 	setupImageRepo(t, map[string]string{"apps/helmrelease.yaml": helmReleaseUpdateFixture})
 

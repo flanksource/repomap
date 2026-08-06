@@ -208,12 +208,7 @@ func statusTags(node *Node) []dependencyTag {
 	if node.Circular {
 		tags = append(tags, dependencyTag{label: "circular", style: "font-bold text-red-600"})
 	}
-	if node.OtherParents > 0 {
-		tags = append(tags, dependencyTag{label: parentMarker(node.OtherParents), style: "text-cyan-600"})
-		if node.Duplicate != nil && node.Duplicate.Conflicts {
-			tags = append(tags, dependencyTag{label: "conflict", style: "font-bold text-red-600"})
-		}
-	} else if node.Duplicate != nil {
+	if node.Duplicate != nil {
 		tag := fmt.Sprintf("dup:%d", node.Duplicate.Count)
 		style := "text-orange-500"
 		if node.Duplicate.Conflicts {
@@ -223,13 +218,6 @@ func statusTags(node *Node) []dependencyTag {
 		tags = append(tags, dependencyTag{label: tag, style: style})
 	}
 	return tags
-}
-
-func parentMarker(other int) string {
-	if other == 1 {
-		return "+1 parent"
-	}
-	return fmt.Sprintf("+%d parents", other)
 }
 
 func sortTags(tags []dependencyTag) []dependencyTag {

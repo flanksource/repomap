@@ -193,6 +193,118 @@ func TestScanImageAndHelmManifestTargets(t *testing.T) {
 	}
 }
 
+func TestScanResourceFilterByKind(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	runGit(t, dir, "init")
+	writeFile(t, filepath.Join(dir, "apps", "workloads.yaml"), deploymentUpdateFixture)
+	writeFile(t, filepath.Join(dir, "apps", "helmrelease.yaml"), helmReleaseUpdateFixture)
+	runGit(t, dir, "add", ".")
+
+	cases := []struct {
+		name      string
+		kind      string
+		keep      Manager
+		drop      Manager
+		wantChild string
+	}{
+		{name: "HelmRelease selects the chart", kind: "HelmRelease", keep: ManagerHelm, drop: ManagerImage, wantChild: "podinfo"},
+		{name: "Deployment selects container images", kind: "Deployment", keep: ManagerImage, drop: ManagerHelm, wantChild: "nginx"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Scan(context.Background(), ".", Options{
+				Managers: []Manager{ManagerImage, ManagerHelm},
+				MaxDepth: 1, // offline: do not trigger remote recursion
+				Kind:     []string{tc.kind},
+				Now:      func() time.Time { return time.Unix(1, 0).UTC() },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dropped := findRoot(got.Roots, tc.drop); dropped != nil {
+				t.Fatalf("kind=%s should exclude the %s root, got %#v", tc.kind, tc.drop, dropped)
+			}
+			kept := findRoot(got.Roots, tc.keep)
+			if kept == nil || findChild(kept, tc.wantChild) == nil {
+				t.Fatalf("kind=%s should keep %s/%s, got %#v", tc.kind, tc.keep, tc.wantChild, kept)
+			}
+		})
+	}
+}
+
+func TestScanResourceFilterExcludesChartDirectories(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	runGit(t, dir, "init")
+	writeFile(t, filepath.Join(dir, "apps", "helmrelease.yaml"), helmReleaseUpdateFixture)
+	writeChartFixture(t, dir) // a Chart.yaml-sourced helm root with no Kubernetes resource metadata
+	runGit(t, dir, "add", ".")
+
+	got, err := Scan(context.Background(), ".", Options{
+		Managers: []Manager{ManagerHelm},
+		MaxDepth: 1, // offline: do not trigger remote recursion
+		Kind:     []string{"HelmRelease"},
+		Now:      func() time.Time { return time.Unix(1, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range got.Roots {
+		if root.Source == "Chart.yaml" {
+			t.Fatalf("a resource filter must exclude Chart.yaml roots (no k8s metadata), got %#v", root)
+		}
+	}
+	if helmRoot := findRoot(got.Roots, ManagerHelm); helmRoot == nil || findChild(helmRoot, "podinfo") == nil {
+		t.Fatalf("kind=HelmRelease should keep the manifest-sourced podinfo chart, got %#v", got.Roots)
+	}
+}
+
+func TestScanSingleFileTarget(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	runGit(t, dir, "init")
+	writeFile(t, filepath.Join(dir, "apps", "workloads.yaml"), deploymentUpdateFixture)
+	writeFile(t, filepath.Join(dir, "apps", "helmrelease.yaml"), helmReleaseUpdateFixture)
+	runGit(t, dir, "add", ".")
+
+	got, err := Scan(context.Background(), filepath.Join("apps", "helmrelease.yaml"), Options{
+		Managers: []Manager{ManagerImage, ManagerHelm},
+		MaxDepth: 1, // offline: do not trigger remote recursion
+		Now:      func() time.Time { return time.Unix(1, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imageRoot := findRoot(got.Roots, ManagerImage); imageRoot != nil {
+		t.Fatalf("scanning a single HelmRelease file must not surface images from another file: %#v", imageRoot)
+	}
+	helmRoot := findRoot(got.Roots, ManagerHelm)
+	if helmRoot == nil || findChild(helmRoot, "podinfo") == nil {
+		t.Fatalf("single-file scan should resolve the file's own chart, got %#v", got.Roots)
+	}
+}
+
+func TestScanUntrackedFileErrors(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	runGit(t, dir, "init")
+	writeFile(t, filepath.Join(dir, "apps", "helmrelease.yaml"), helmReleaseUpdateFixture)
+	// Deliberately do NOT `git add` — deps only scans git-tracked manifests.
+
+	_, err := Scan(context.Background(), filepath.Join("apps", "helmrelease.yaml"), Options{
+		Managers: []Manager{ManagerImage, ManagerHelm},
+		MaxDepth: 1,
+		Now:      func() time.Time { return time.Unix(1, 0).UTC() },
+	})
+	if err == nil {
+		t.Fatal("scanning an untracked file should error")
+	}
+	if !strings.Contains(err.Error(), "not tracked") {
+		t.Fatalf("error should explain the file is untracked, got %q", err.Error())
+	}
+}
+
 func TestNodeImplementsClickyTreeNode(t *testing.T) {
 	var _ api.TreeNode = (*Node)(nil)
 
