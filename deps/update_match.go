@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/flanksource/commons/collections"
+
+	"github.com/flanksource/repomap/imageupdate"
 )
 
 func updateManagers(managers []Manager) ([]Manager, error) {
@@ -147,6 +149,38 @@ func splitExplicitPathPatterns(patterns []string) (identity updatePatternSet, pa
 
 func (c UpdateCandidate) key() string {
 	return strings.Join([]string{string(c.Manager), c.Dir, c.File, c.Scope, c.Name}, "\x00")
+}
+
+// resolutionKey groups candidates whose published-version lookup yields the same
+// result, so one network round-trip can serve every occurrence. Image tags come
+// from the repository, chart versions from the chart+repo source, and package
+// versions from the registry resolved in the project dir.
+func (c UpdateCandidate) resolutionKey() string {
+	switch c.Manager {
+	case ManagerImage:
+		return strings.Join([]string{string(ManagerImage), c.Name}, "\x00")
+	case ManagerHelm:
+		return strings.Join([]string{string(ManagerHelm), c.Name, helmSourceKey(c.Target)}, "\x00")
+	default:
+		return strings.Join([]string{string(c.Manager), c.Name, c.Dir}, "\x00")
+	}
+}
+
+// helmSourceKey identifies the chart repository a Helm candidate resolves
+// against; charts sharing a name but a different repo (or an unresolved source)
+// must not collapse onto the same lookup.
+func helmSourceKey(target *imageupdate.UpdateTarget) string {
+	if target == nil {
+		return ""
+	}
+	if target.SourceErr != "" {
+		return "err:" + target.SourceErr
+	}
+	key := target.RepoURL
+	if target.IsOCI {
+		key += "|oci"
+	}
+	return key
 }
 
 func (c UpdateCandidate) less(other UpdateCandidate) bool {

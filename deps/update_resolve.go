@@ -11,26 +11,66 @@ import (
 )
 
 func resolveUpdateChoices(ctx context.Context, candidates []UpdateCandidate, opts UpdateOptions) ([]UpdateChoice, map[string]UpdatePlan) {
-	type result struct {
-		versions         []string
-		latestStable     string
-		latestPrerelease string
-		err              error
+	rawByKey := resolveRawVersionsByKey(ctx, candidates, opts)
+
+	plansByKey := map[string]UpdatePlan{}
+	choices := make([]UpdateChoice, 0, len(candidates))
+	for _, candidate := range candidates {
+		raw := rawByKey[candidate.resolutionKey()]
+		if raw.err != nil {
+			plansByKey[candidate.key()] = skippedUpdatePlan(candidate, raw.err.Error())
+			continue
+		}
+		// The "newer than current" filtering is per occurrence: duplicates of the
+		// same dependency may sit at different current versions even though they
+		// share one published-version list.
+		versions := updateableVersions(candidate.Current, raw.versions)
+		if len(versions) == 0 {
+			continue
+		}
+		choices = append(choices, UpdateChoice{
+			Candidate:        candidate,
+			Versions:         versions,
+			LatestStable:     latestStableVersion(versions),
+			LatestPrerelease: latestPrereleaseVersion(versions),
+		})
 	}
-	results := make([]result, len(candidates))
+	return choices, plansByKey
+}
+
+type rawVersionResult struct {
+	versions []string
+	err      error
+}
+
+// resolveRawVersionsByKey looks up the published versions for every distinct
+// dependency source among candidates, running one lookup per source and sharing
+// it across duplicate occurrences. The same image repository, chart+repo, or
+// package resolves identically wherever it is referenced, so collapsing them
+// avoids redundant registry/proxy round-trips. The result is keyed by
+// UpdateCandidate.resolutionKey.
+func resolveRawVersionsByKey(ctx context.Context, candidates []UpdateCandidate, opts UpdateOptions) map[string]rawVersionResult {
+	keys := make([]string, 0, len(candidates))
+	rep := map[string]UpdateCandidate{}
+	for _, candidate := range candidates {
+		key := candidate.resolutionKey()
+		if _, ok := rep[key]; !ok {
+			rep[key] = candidate
+			keys = append(keys, key)
+		}
+	}
+
+	results := make([]rawVersionResult, len(keys))
 	group := task.StartGroup[int]("Resolving dependency versions", task.WithConcurrency(updateResolveConcurrency))
-	for i, candidate := range candidates {
-		idx, c := i, candidate
-		group.Add(updateTaskName(c), func(_ flanksourceContext.Context, tk *task.Task) (int, error) {
+	for i, key := range keys {
+		idx, candidate := i, rep[key]
+		group.Add(updateTaskName(candidate), func(_ flanksourceContext.Context, tk *task.Task) (int, error) {
 			tk.Infof("looking up published versions")
-			versions, latestStable, latestPrerelease, err := resolveCandidateVersions(ctx, opts, c)
-			results[idx] = result{versions: versions, latestStable: latestStable, latestPrerelease: latestPrerelease, err: err}
+			versions, err := resolveCandidateRawVersions(ctx, opts, candidate)
+			results[idx] = rawVersionResult{versions: versions, err: err}
 			if err != nil {
 				tk.Warnf("%s", err.Error())
 				tk.Warning()
-			} else if len(versions) == 0 {
-				tk.Infof("already up to date")
-				tk.Success()
 			} else {
 				tk.Success()
 			}
@@ -39,43 +79,24 @@ func resolveUpdateChoices(ctx context.Context, candidates []UpdateCandidate, opt
 	}
 	_, _ = group.GetResults()
 
-	plansByKey := map[string]UpdatePlan{}
-	choices := make([]UpdateChoice, 0, len(candidates))
-	for i, candidate := range candidates {
-		result := results[i]
-		if result.err != nil {
-			plansByKey[candidate.key()] = skippedUpdatePlan(candidate, result.err.Error())
-			continue
-		}
-		if len(result.versions) == 0 {
-			continue
-		}
-		choices = append(choices, UpdateChoice{
-			Candidate:        candidate,
-			Versions:         result.versions,
-			LatestStable:     result.latestStable,
-			LatestPrerelease: result.latestPrerelease,
-		})
+	byKey := make(map[string]rawVersionResult, len(keys))
+	for i, key := range keys {
+		byKey[key] = results[i]
 	}
-	return choices, plansByKey
+	return byKey
 }
 
-func resolveCandidateVersions(ctx context.Context, opts UpdateOptions, candidate UpdateCandidate) ([]string, string, string, error) {
-	var (
-		versions []string
-		err      error
-	)
+// resolveCandidateRawVersions returns a candidate source's published versions
+// without the per-occurrence "newer than current" filtering, so the result can
+// be cached and reused across duplicate occurrences.
+func resolveCandidateRawVersions(ctx context.Context, opts UpdateOptions, candidate UpdateCandidate) ([]string, error) {
 	switch candidate.Manager {
 	case ManagerImage, ManagerHelm:
-		versions, _, _, err = availableImageTargetVersions(ctx, opts.ImageResolver, candidate)
+		versions, _, _, err := availableImageTargetVersions(ctx, opts.ImageResolver, candidate)
+		return versions, err
 	default:
-		versions, err = AvailableDependencyVersions(ctx, opts.Runner, candidate)
+		return AvailableDependencyVersions(ctx, opts.Runner, candidate)
 	}
-	if err != nil {
-		return nil, "", "", err
-	}
-	versions = updateableVersions(candidate.Current, versions)
-	return versions, latestStableVersion(versions), latestPrereleaseVersion(versions), nil
 }
 
 func AvailableDependencyVersions(ctx context.Context, runner CommandRunner, candidate UpdateCandidate) ([]string, error) {

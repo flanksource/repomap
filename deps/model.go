@@ -28,8 +28,17 @@ type Options struct {
 	Flat            bool
 	IncludeIndirect bool
 	ShowDuplicates  bool
-	Runner          CommandRunner
-	Now             func() time.Time
+
+	// Resource filters for image/helm targets discovered from Kubernetes
+	// manifests (ignored by package managers and chart-directory scanning, which
+	// have no Kubernetes resource metadata to match against).
+	Kind      []string
+	Namespace []string
+	Name      []string
+	Selector  []string
+
+	Runner CommandRunner
+	Now    func() time.Time
 	// remote injects a pre-built remote resolver (cache + chart/image resolvers)
 	// for tests; nil in production, where Scan builds a disk-backed one.
 	remote *remoteDeps
@@ -66,24 +75,22 @@ type Metadata struct {
 }
 
 type Node struct {
-	ID               string  `json:"id"`
-	Name             string  `json:"name"`
-	Version          string  `json:"version,omitempty"`
-	Manager          Manager `json:"manager"`
-	Scope            string  `json:"scope,omitempty"`
-	Source           string  `json:"source,omitempty"`
-	Path             string  `json:"path,omitempty"`
-	Direct           bool    `json:"direct,omitempty"`
-	Dev              bool    `json:"dev,omitempty"`
-	Optional         bool    `json:"optional,omitempty"`
-	Local            bool    `json:"local,omitempty"`
-	Depth            int     `json:"depth"`
-	Circular         bool    `json:"circular,omitempty"`
-	Duplicate        *DupRef `json:"duplicate,omitempty"`
-	OtherParents     int     `json:"other_parents,omitempty"`
-	HiddenDuplicates int     `json:"hidden_duplicates,omitempty"`
-	Children         []*Node `json:"children,omitempty"`
-	properties       map[string]string
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	Version    string  `json:"version,omitempty"`
+	Manager    Manager `json:"manager"`
+	Scope      string  `json:"scope,omitempty"`
+	Source     string  `json:"source,omitempty"`
+	Path       string  `json:"path,omitempty"`
+	Direct     bool    `json:"direct,omitempty"`
+	Dev        bool    `json:"dev,omitempty"`
+	Optional   bool    `json:"optional,omitempty"`
+	Local      bool    `json:"local,omitempty"`
+	Depth      int     `json:"depth"`
+	Circular   bool    `json:"circular,omitempty"`
+	Duplicate  *DupRef `json:"duplicate,omitempty"`
+	Children   []*Node `json:"children,omitempty"`
+	properties map[string]string
 }
 
 type FlatNode struct {
