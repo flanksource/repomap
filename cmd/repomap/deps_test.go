@@ -1,11 +1,32 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/flanksource/clicky"
 	depgraph "github.com/flanksource/repomap/deps"
+	"github.com/spf13/cobra"
 )
+
+func TestDepsPositionalPathHonored(t *testing.T) {
+	var gotPath string
+	root := &cobra.Command{Use: "test"}
+	clicky.BindAllFlags(root.PersistentFlags(), "tasks", "format")
+	clicky.AddNamedCommandWithContext("deps", root, DepsOptions{}, func(_ context.Context, opts DepsOptions) (*depgraph.Export, error) {
+		gotPath = opts.Path
+		return &depgraph.Export{}, nil
+	})
+
+	root.SetArgs([]string{"deps", "/tmp/some/scan/path", "--json"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/tmp/some/scan/path" {
+		t.Fatalf("positional path not bound: opts.Path = %q, want /tmp/some/scan/path", gotPath)
+	}
+}
 
 func TestParseManagers(t *testing.T) {
 	got, err := parseManagers([]string{"go,npm", "pnpm", "image", "docker", "helm"})

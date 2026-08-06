@@ -49,17 +49,31 @@ func init() {
 func main() {
 	defer shutdown.RecoverAndShutdown()
 
-	// Default to scan when no subcommand is given
-	if args := os.Args[1:]; len(args) == 0 || args[0] == "" || args[0][0] == '-' {
-		rootCmd.SetArgs(append([]string{"scan"}, args...))
-	} else if args[0] != "help" && args[0] != "completion" {
-		if cmd, _, _ := rootCmd.Find(args); cmd == rootCmd {
-			rootCmd.SetArgs(append([]string{"scan"}, args...))
-		}
-	}
+	rootCmd.SetArgs(defaultToScan(os.Args[1:]))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// defaultToScan rewrites CLI args so that `scan` is the implicit subcommand: a
+// bare invocation, or one that leads with scan flags or a bare path, becomes
+// `scan ...`. Help and completion are left untouched so `repomap --help` (and
+// `-h`) shows the root command with its full subcommand list rather than scan's
+// help.
+func defaultToScan(args []string) []string {
+	if len(args) == 0 {
+		return []string{"scan"}
+	}
+	if args[0] == "-h" || args[0] == "--help" || args[0] == "help" || args[0] == "completion" {
+		return args
+	}
+	if args[0] == "" || args[0][0] == '-' {
+		return append([]string{"scan"}, args...)
+	}
+	if cmd, _, _ := rootCmd.Find(args); cmd == rootCmd {
+		return append([]string{"scan"}, args...)
+	}
+	return args
 }

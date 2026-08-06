@@ -44,7 +44,7 @@ func init() {
 // `images update`. The first four mirror `scan`'s resource filters; --image and
 // --chart further narrow by image repo / chart name.
 type imageFilterOptions struct {
-	Path      string   `json:"path" args:"true" help:"Path to scan" default:"."`
+	Path      string   `json:"path" args:"true" help:"Path to scan (defaults to current directory)"`
 	Kind      []string `json:"kind" flag:"kind,k" help:"Filter by kind, e.g. HelmRelease,Deployment (MatchItem syntax)"`
 	Namespace []string `json:"namespace" flag:"namespace,n" help:"Filter by namespace (MatchItem syntax)"`
 	Name      []string `json:"name" flag:"name" help:"Filter by resource name (MatchItem syntax)"`
