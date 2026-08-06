@@ -25,7 +25,7 @@ var supportedUpdateManagers = map[Manager]bool{
 }
 
 type CandidateSelector func([]UpdateChoice) ([]UpdateChoice, bool)
-type VersionSelector func(UpdateChoice) (string, bool)
+type VersionSelector func(UpdateVersionPrompt) (string, bool)
 
 type ImageVersionResolver interface {
 	Available(context.Context, imageupdate.UpdateTarget) ([]string, error)
@@ -34,8 +34,8 @@ type ImageVersionResolver interface {
 }
 
 type UpdateOptions struct {
-	Managers   []Manager
-	Expression []string
+	Managers []Manager
+	Filters  []string
 
 	// Resource filters for image/helm targets (ignored by package managers).
 	Kind      []string
@@ -85,6 +85,14 @@ type UpdateChoice struct {
 	LatestPrerelease string          `json:"latest_prerelease,omitempty"`
 }
 
+// UpdateVersionPrompt is a single version question standing in for every
+// selected occurrence of the same dependency. Candidate is the first
+// occurrence; Files lists each distinct manifest the answer will be written to.
+type UpdateVersionPrompt struct {
+	UpdateChoice
+	Files []string `json:"files"`
+}
+
 type UpdatePlan struct {
 	Manager    Manager  `json:"manager"`
 	Name       string   `json:"name"`
@@ -112,7 +120,7 @@ func Update(ctx context.Context, path string, opts UpdateOptions) ([]UpdatePlan,
 	if err != nil {
 		return nil, err
 	}
-	patterns := splitUpdatePatterns(opts.Expression)
+	patterns := splitUpdatePatterns(opts.Filters)
 	if opts.Runner == nil {
 		opts.Runner = ExecRunner{}
 	}
@@ -187,13 +195,17 @@ func Update(ctx context.Context, path string, opts UpdateOptions) ([]UpdatePlan,
 	if selectVersion == nil {
 		selectVersion = promptUpdateVersion
 	}
-	for _, choice := range sortSelectedUpdateChoicesByFile(selected) {
-		version, ok := selectVersion(choice)
-		if !ok || strings.TrimSpace(version) == "" {
-			plansByKey[choice.Candidate.key()] = skippedUpdatePlan(choice.Candidate, "no version selected")
-			continue
+	// A dependency repeated across manifests poses one question, so occurrences
+	// sharing a version prompt are confirmed once and the answer applied to all.
+	for _, group := range groupChoicesForVersionPrompt(sortSelectedUpdateChoicesByFile(selected)) {
+		version, ok := selectVersion(newUpdateVersionPrompt(group))
+		for _, choice := range group {
+			if !ok || strings.TrimSpace(version) == "" {
+				plansByKey[choice.Candidate.key()] = skippedUpdatePlan(choice.Candidate, "no version selected")
+				continue
+			}
+			plansByKey[choice.Candidate.key()] = applyDependencyUpdate(ctx, choice.Candidate, version, opts)
 		}
-		plansByKey[choice.Candidate.key()] = applyDependencyUpdate(ctx, choice.Candidate, version, opts)
 	}
 	return orderedUpdatePlans(candidates, plansByKey), nil
 }

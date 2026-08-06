@@ -137,3 +137,118 @@ func TestDepsUpdateCommandRegistered(t *testing.T) {
 		t.Fatalf("manager help should document update-supported managers, got %q", manager.Usage)
 	}
 }
+
+// deps update must declare its own --filter, otherwise the flag silently binds
+// to clicky's persistent format flag (`--filter string`, a CEL output filter)
+// and the MatchItem patterns never reach depgraph.Update.
+func TestDepsUpdateFilterFlagShadowsGlobalCELFilter(t *testing.T) {
+	cmd, _, err := rootCmd.Find([]string{"deps", "update"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	flag := cmd.Flags().Lookup("filter")
+	if flag == nil {
+		t.Fatal("filter flag not registered on deps update")
+	}
+	if got := flag.Value.Type(); got != "stringSlice" {
+		t.Fatalf("filter flag type = %q, want stringSlice (clicky's global CEL filter is a string)", got)
+	}
+	if !strings.Contains(flag.Usage, "MatchItem syntax") {
+		t.Fatalf("filter help should document MatchItem syntax, got %q", flag.Usage)
+	}
+}
+
+func TestDepsUpdateFilterFlagBindsToOptions(t *testing.T) {
+	var got DepsUpdateOptions
+	root := &cobra.Command{Use: "test"}
+	clicky.BindAllFlags(root.PersistentFlags(), "tasks", "format")
+	deps := clicky.AddNamedCommandWithContext("deps", root, DepsOptions{}, func(_ context.Context, _ DepsOptions) (*depgraph.Export, error) {
+		return &depgraph.Export{}, nil
+	})
+	clicky.AddNamedCommandWithContext("update", deps, DepsUpdateOptions{}, func(_ context.Context, opts DepsUpdateOptions) (any, error) {
+		got = opts
+		return nil, nil
+	})
+
+	root.SetArgs([]string{"deps", "update", "--filter", "*flanksource*,!*test*", "--filter", "left-pad", "--json"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	// cobra's stringSlice comma-splits at parse time; depgraph.Update splits
+	// again for the positional expr, which arrives as one unsplit string.
+	want := []string{"*flanksource*", "!*test*", "left-pad"}
+	if len(got.Filter) != len(want) {
+		t.Fatalf("Filter = %#v, want %#v", got.Filter, want)
+	}
+	for i := range want {
+		if got.Filter[i] != want[i] {
+			t.Fatalf("Filter[%d] = %q, want %q", i, got.Filter[i], want[i])
+		}
+	}
+}
+
+func TestUpdateFiltersCombinesFlagAndPositionalExpr(t *testing.T) {
+	cases := []struct {
+		name   string
+		filter []string
+		expr   string
+		want   []string
+	}{
+		{name: "neither", want: nil},
+		{name: "flag only", filter: []string{"npm:@scope/*"}, want: []string{"npm:@scope/*"}},
+		{name: "expr only", expr: "left-pad", want: []string{"left-pad"}},
+		{
+			name:   "flag and expr combined",
+			filter: []string{"*flanksource*", "!*test*"},
+			expr:   "path:apps/*/package.json",
+			want:   []string{"*flanksource*", "!*test*", "path:apps/*/package.json"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := updateFilters(tc.filter, tc.expr)
+			if len(got) != len(tc.want) {
+				t.Fatalf("updateFilters(%#v, %q) = %#v, want %#v", tc.filter, tc.expr, got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Fatalf("pattern[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestParseDepsUpdateArgs(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name     string
+		args     []string
+		wantExpr string
+		wantPath string
+		wantErr  bool
+	}{
+		{name: "no args defaults to cwd", wantPath: "."},
+		{name: "existing dir is the path", args: []string{dir}, wantPath: dir},
+		{name: "non-dir is the expression", args: []string{"left-pad"}, wantExpr: "left-pad", wantPath: "."},
+		{name: "expr then path", args: []string{"left-pad", dir}, wantExpr: "left-pad", wantPath: dir},
+		{name: "too many args", args: []string{"a", "b", "c"}, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, path, err := parseDepsUpdateArgs(tc.args)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %#v", tc.args)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if expr != tc.wantExpr || path != tc.wantPath {
+				t.Fatalf("parseDepsUpdateArgs(%#v) = (%q, %q), want (%q, %q)", tc.args, expr, path, tc.wantExpr, tc.wantPath)
+			}
+		})
+	}
+}
