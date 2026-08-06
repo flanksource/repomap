@@ -200,7 +200,7 @@ func TestUpdate_FilterThenChecksOnlyFilteredSet(t *testing.T) {
 	}
 }
 
-func TestUpdate_NoExpressionMatchesAll(t *testing.T) {
+func TestUpdate_NoFiltersMatchesAll(t *testing.T) {
 	setupImageRepo(t, map[string]string{"apps/helmrelease.yaml": helmReleaseUpdateFixture})
 
 	plans, err := Update(context.Background(), ".", UpdateOptions{

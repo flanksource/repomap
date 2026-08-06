@@ -86,7 +86,7 @@ require github.com/acme/direct v1.2.3
 	}
 }
 
-func TestUpdateCandidateMatchesMatchItemExpression(t *testing.T) {
+func TestUpdateCandidateMatchesMatchItemFilter(t *testing.T) {
 	candidates := []UpdateCandidate{
 		{Manager: ManagerGo, Name: "github.com/acme/lib", Current: "v1.0.0", File: "/work/flanksource/app/go.mod"},
 		{Manager: ManagerGo, Name: "github.com/flanksource/lib", Current: "v1.0.0", File: "/work/other/go.mod"},
@@ -160,14 +160,14 @@ func TestUpdateDryRunBuildsPackageManagerCommand(t *testing.T) {
 		},
 	}
 	plans, err := Update(context.Background(), dir, UpdateOptions{
-		Managers:   []Manager{ManagerNPM},
-		Expression: []string{"left-pad"},
-		DryRun:     true,
-		Runner:     runner,
+		Managers: []Manager{ManagerNPM},
+		Filters:  []string{"left-pad"},
+		DryRun:   true,
+		Runner:   runner,
 		SelectCandidates: func(choices []UpdateChoice) ([]UpdateChoice, bool) {
 			return choices, true
 		},
-		SelectVersion: func(choice UpdateChoice) (string, bool) {
+		SelectVersion: func(UpdateVersionPrompt) (string, bool) {
 			return "1.4.0", true
 		},
 	})
@@ -203,10 +203,10 @@ func TestUpdateSkipsCandidatesWithoutChangesBeforePrompt(t *testing.T) {
 		},
 	}
 	plans, err := Update(context.Background(), dir, UpdateOptions{
-		Managers:   []Manager{ManagerNPM},
-		Expression: []string{"left-pad"},
-		DryRun:     true,
-		Runner:     runner,
+		Managers: []Manager{ManagerNPM},
+		Filters:  []string{"left-pad"},
+		DryRun:   true,
+		Runner:   runner,
 		SelectCandidates: func([]UpdateChoice) ([]UpdateChoice, bool) {
 			t.Fatal("no-change candidates must not be shown for selection")
 			return nil, false
@@ -233,15 +233,15 @@ func TestUpdateCheckListsUpdatesWithoutPrompting(t *testing.T) {
 		},
 	}
 	plans, err := Update(context.Background(), dir, UpdateOptions{
-		Managers:   []Manager{ManagerNPM},
-		Expression: []string{"left-pad"},
-		Check:      true,
-		Runner:     runner,
+		Managers: []Manager{ManagerNPM},
+		Filters:  []string{"left-pad"},
+		Check:    true,
+		Runner:   runner,
 		SelectCandidates: func([]UpdateChoice) ([]UpdateChoice, bool) {
 			t.Fatal("--check must not prompt for dependency selection")
 			return nil, false
 		},
-		SelectVersion: func(UpdateChoice) (string, bool) {
+		SelectVersion: func(UpdateVersionPrompt) (string, bool) {
 			t.Fatal("--check must not prompt for a version")
 			return "", false
 		},
@@ -353,7 +353,7 @@ func TestUpdateImageDryRunUsesImageVersionResolver(t *testing.T) {
 
 	plans, err := Update(context.Background(), ".", UpdateOptions{
 		Managers:      []Manager{ManagerImage},
-		Expression:    []string{"*nginx*"},
+		Filters:       []string{"*nginx*"},
 		DryRun:        true,
 		ImageResolver: fakeImageVersionResolver{"nginx": []string{"1.27.0", "1.25.3"}},
 		SelectCandidates: func(choices []UpdateChoice) ([]UpdateChoice, bool) {
@@ -362,7 +362,7 @@ func TestUpdateImageDryRunUsesImageVersionResolver(t *testing.T) {
 			}
 			return choices, true
 		},
-		SelectVersion: func(choice UpdateChoice) (string, bool) {
+		SelectVersion: func(UpdateVersionPrompt) (string, bool) {
 			return "1.27.0", true
 		},
 	})
@@ -397,13 +397,13 @@ func TestUpdateStagesChangedFilesAfterWrite(t *testing.T) {
 		},
 	}
 	plans, err := Update(context.Background(), dir, UpdateOptions{
-		Managers:   []Manager{ManagerNPM},
-		Expression: []string{"left-pad"},
-		Runner:     runner,
+		Managers: []Manager{ManagerNPM},
+		Filters:  []string{"left-pad"},
+		Runner:   runner,
 		SelectCandidates: func(choices []UpdateChoice) ([]UpdateChoice, bool) {
 			return choices, true
 		},
-		SelectVersion: func(UpdateChoice) (string, bool) {
+		SelectVersion: func(UpdateVersionPrompt) (string, bool) {
 			return "1.4.0", true
 		},
 	})
@@ -449,14 +449,14 @@ func TestUpdateDryRunDoesNotStage(t *testing.T) {
 		},
 	}
 	plans, err := Update(context.Background(), dir, UpdateOptions{
-		Managers:   []Manager{ManagerNPM},
-		Expression: []string{"left-pad"},
-		DryRun:     true,
-		Runner:     runner,
+		Managers: []Manager{ManagerNPM},
+		Filters:  []string{"left-pad"},
+		DryRun:   true,
+		Runner:   runner,
 		SelectCandidates: func(choices []UpdateChoice) ([]UpdateChoice, bool) {
 			return choices, true
 		},
-		SelectVersion: func(UpdateChoice) (string, bool) {
+		SelectVersion: func(UpdateVersionPrompt) (string, bool) {
 			return "1.4.0", true
 		},
 	})
@@ -501,12 +501,12 @@ func TestUpdateImageStagesEditedManifest(t *testing.T) {
 
 	plans, err := Update(context.Background(), ".", UpdateOptions{
 		Managers:      []Manager{ManagerImage},
-		Expression:    []string{"*nginx*"},
+		Filters:       []string{"*nginx*"},
 		ImageResolver: fakeImageVersionResolver{"nginx": []string{"1.27.0", "1.25.3"}},
 		SelectCandidates: func(choices []UpdateChoice) ([]UpdateChoice, bool) {
 			return choices, true
 		},
-		SelectVersion: func(UpdateChoice) (string, bool) {
+		SelectVersion: func(UpdateVersionPrompt) (string, bool) {
 			return "1.27.0", true
 		},
 	})
@@ -582,8 +582,8 @@ func TestUpdateCommandForManagers(t *testing.T) {
 
 func TestUpdateRejectsUnsupportedManagers(t *testing.T) {
 	_, err := Update(context.Background(), t.TempDir(), UpdateOptions{
-		Managers:   []Manager{ManagerMaven},
-		Expression: []string{"*"},
+		Managers: []Manager{ManagerMaven},
+		Filters:  []string{"*"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "unsupported manager") {
 		t.Fatalf("expected unsupported manager error, got %v", err)
