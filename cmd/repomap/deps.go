@@ -28,6 +28,7 @@ type DepsOptions struct {
 type DepsUpdateOptions struct {
 	Args      []string `json:"args" args:"true" help:"Optional dependency MatchItem expression followed by optional path"`
 	Manager   []string `json:"manager,omitempty" flag:"manager" help:"Dependency manager to update: go, npm, pnpm, image/docker, helm (repeatable or comma-separated)"`
+	Filter    []string `json:"filter,omitempty" flag:"filter" help:"Dependency filter patterns (MatchItem syntax) matched against name, manager, manager:name, manager:name@version, scope, and version; use path:/file: for manifest paths; supports comma-separated values and !exclusions"`
 	Kind      []string `json:"kind,omitempty" flag:"kind,k" help:"Filter image/helm targets by kind, e.g. HelmRelease,Deployment (MatchItem syntax)"`
 	Namespace []string `json:"namespace,omitempty" flag:"namespace,n" help:"Filter image/helm targets by namespace (MatchItem syntax)"`
 	Name      []string `json:"name,omitempty" flag:"name" help:"Filter image/helm targets by resource name (MatchItem syntax)"`
@@ -97,22 +98,29 @@ EXAMPLES:
 func (opts DepsUpdateOptions) Help() api.Text {
 	return clicky.Text(`Update direct package, image, and Helm chart dependencies.
 
-The optional expr argument uses commons MatchItem syntax and is matched against
-dependency names, manager-qualified names, versions, and scopes. Manifest path
-matching is explicit with path:<pattern> or file:<pattern>. With no expr, every
-matched dependency is considered. Image and Helm targets (from git-tracked
+Dependencies are narrowed with --filter and/or the optional positional expr;
+both use commons MatchItem syntax, accept comma-separated values and
+!exclusions, and are combined into a single pattern set. Patterns are matched
+against dependency names, manager-qualified names, versions, and scopes.
+Manifest path matching is explicit with path:<pattern> or file:<pattern>. With
+no patterns, every matched dependency is considered. Image and Helm targets (from git-tracked
 Kubernetes/Flux manifests, including HelmRelease spec.chartRef OCIRepository and
 HelmChart sources) can be further narrowed with --kind/--namespace/--name/
 --selector and the --image/--chart name patterns.
 
-By default repomap prompts for which dependencies and versions to apply. Use
---latest to resolve each to its highest stable version, or --version to apply a
-concrete version, both non-interactively. Applied updates are staged with git add
+By default repomap prompts for which dependencies and versions to apply. A
+dependency declared in several manifests at the same version is confirmed once
+and the chosen version written to every occurrence; occurrences sitting at
+different current versions are still confirmed separately. Use --latest to
+resolve each to its highest stable version, or --version to apply a concrete
+version, both non-interactively. Applied updates are staged with git add
 (manifests plus lockfiles); --dry-run and --check never stage.
 
 Use --check to list updateable dependencies without prompting or writing.
 
 EXAMPLES:
+  repomap deps update --filter 'github.com/flanksource/*'
+  repomap deps update --filter '*flanksource*,!*test*' --check
   repomap deps update 'github.com/flanksource/*'
   repomap deps update '*' --check
   repomap deps update --manager helm -k HelmRelease --latest
@@ -172,28 +180,35 @@ func runDepsUpdate(ctx context.Context, opts DepsUpdateOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var expression []string
-	if expr != "" {
-		expression = []string{expr}
-	}
 	plans, err := depgraph.Update(ctx, path, depgraph.UpdateOptions{
-		Managers:   managers,
-		Expression: expression,
-		Kind:       opts.Kind,
-		Namespace:  opts.Namespace,
-		Name:       opts.Name,
-		Selector:   opts.Selector,
-		Image:      opts.Image,
-		Chart:      opts.Chart,
-		Latest:     opts.Latest,
-		Version:    opts.Version,
-		Check:      opts.Check,
-		DryRun:     opts.DryRun,
+		Managers:  managers,
+		Filters:   updateFilters(opts.Filter, expr),
+		Kind:      opts.Kind,
+		Namespace: opts.Namespace,
+		Name:      opts.Name,
+		Selector:  opts.Selector,
+		Image:     opts.Image,
+		Chart:     opts.Chart,
+		Latest:    opts.Latest,
+		Version:   opts.Version,
+		Check:     opts.Check,
+		DryRun:    opts.DryRun,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return api.NewTableFrom(plans), nil
+}
+
+// updateFilters combines --filter values with the optional positional expr into
+// one MatchItem pattern set. Patterns are forwarded raw because depgraph.Update
+// already comma-splits and trims them.
+func updateFilters(filter []string, expr string) []string {
+	out := append([]string{}, filter...)
+	if expr != "" {
+		out = append(out, expr)
+	}
+	return out
 }
 
 // parseDepsUpdateArgs interprets the optional positional [expr] [path]. With one

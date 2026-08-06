@@ -13,10 +13,52 @@ func promptUpdateCandidates(choices []UpdateChoice) ([]UpdateChoice, bool) {
 	return runUpdateChoiceTreePicker(choices)
 }
 
-func promptUpdateVersion(choice UpdateChoice) (string, bool) {
-	candidate := choice.Candidate
-	title := fmt.Sprintf("Select version for %s in %s (current %s)", candidate.Name, candidate.File, candidate.Current)
-	return clicky.PromptSelect(choice.Versions, clicky.PromptSelectOptions[string]{
+// versionPromptKey identifies occurrences that pose the identical version
+// question: the same dependency, at the same current version, with the same
+// available versions. Occurrences that differ in any of those are genuinely
+// different decisions and stay separate prompts.
+func (c UpdateChoice) versionPromptKey() string {
+	parts := append([]string{string(c.Candidate.Manager), c.Candidate.Name, c.Candidate.Current}, c.Versions...)
+	return strings.Join(parts, "\x00")
+}
+
+// groupChoicesForVersionPrompt collapses occurrences sharing a version question
+// into one group, keeping the input order of each group's first occurrence.
+func groupChoicesForVersionPrompt(choices []UpdateChoice) [][]UpdateChoice {
+	indexByKey := map[string]int{}
+	var groups [][]UpdateChoice
+	for _, choice := range choices {
+		key := choice.versionPromptKey()
+		if i, ok := indexByKey[key]; ok {
+			groups[i] = append(groups[i], choice)
+			continue
+		}
+		indexByKey[key] = len(groups)
+		groups = append(groups, []UpdateChoice{choice})
+	}
+	return groups
+}
+
+func newUpdateVersionPrompt(group []UpdateChoice) UpdateVersionPrompt {
+	files := make([]string, 0, len(group))
+	seen := map[string]bool{}
+	for _, choice := range group {
+		if file := choice.Candidate.File; !seen[file] {
+			seen[file] = true
+			files = append(files, file)
+		}
+	}
+	return UpdateVersionPrompt{UpdateChoice: group[0], Files: files}
+}
+
+func promptUpdateVersion(prompt UpdateVersionPrompt) (string, bool) {
+	candidate := prompt.Candidate
+	location := candidate.File
+	if len(prompt.Files) > 1 {
+		location = fmt.Sprintf("%d files", len(prompt.Files))
+	}
+	title := fmt.Sprintf("Select version for %s in %s (current %s)", candidate.Name, location, candidate.Current)
+	return clicky.PromptSelect(prompt.Versions, clicky.PromptSelectOptions[string]{
 		Title:    title,
 		PageSize: 12,
 		Render: func(version string) api.Textable {
@@ -25,10 +67,10 @@ func promptUpdateVersion(choice UpdateChoice) (string, bool) {
 			if selectedVersionIsCurrent(candidate.Current, version) {
 				tags = append(tags, "current")
 			}
-			if version == choice.LatestStable {
+			if version == prompt.LatestStable {
 				tags = append(tags, "latest stable")
 			}
-			if version == choice.LatestPrerelease {
+			if version == prompt.LatestPrerelease {
 				tags = append(tags, "latest pre-release")
 			}
 			if isPrerelease(version) {
