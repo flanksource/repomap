@@ -1,17 +1,25 @@
 package deps
 
-import "time"
+import (
+	"time"
 
-type Manager string
+	"github.com/flanksource/repomap/deps/manifest"
+)
+
+// Manager is defined in deps/manifest so the per-manager packages under
+// deps/manager can name it without importing deps. It stays an alias here, and
+// the constants stay re-declared, so every existing switch and caller is
+// unaffected; the underlying type is still string, so JSON is unchanged.
+type Manager = manifest.Manager
 
 const (
-	ManagerGo     Manager = "go"
-	ManagerMaven  Manager = "maven"
-	ManagerGradle Manager = "gradle"
-	ManagerNPM    Manager = "npm"
-	ManagerPNPM   Manager = "pnpm"
-	ManagerImage  Manager = "image"
-	ManagerHelm   Manager = "helm"
+	ManagerGo     = manifest.ManagerGo
+	ManagerMaven  = manifest.ManagerMaven
+	ManagerGradle = manifest.ManagerGradle
+	ManagerNPM    = manifest.ManagerNPM
+	ManagerPNPM   = manifest.ManagerPNPM
+	ManagerImage  = manifest.ManagerImage
+	ManagerHelm   = manifest.ManagerHelm
 )
 
 type Mode string

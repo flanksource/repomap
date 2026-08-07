@@ -96,6 +96,42 @@ lockfile content without running package-manager commands. It prints direct
 dependencies by default; use `--depth 0` for the full graph available from the
 local files.
 
+### `cache-warm`
+
+Prime the local package caches for dependencies this machine has not checked out.
+
+```bash
+# Download a module and its full transitive closure into GOMODCACHE
+repomap cache-warm go github.com/flanksource/clicky@v1.21.14
+
+# Take the current version, compile every package, and prove it works offline
+repomap cache-warm go github.com/flanksource/commons --build --verify
+
+# Warm several npm packages into the pnpm store
+repomap cache-warm pnpm react@18.2.0 react-dom@18.2.0
+```
+
+For each `name@version` spec, repomap creates a throwaway single-dependency
+project in a temporary directory, drives the real package manager to download the
+closure into the machine's shared cache, then deletes the project. Nothing in the
+working tree is touched; what persists is the warmed cache (`GOMODCACHE`, the pnpm
+store, or the npm cache). Omit the version to take whatever the manager considers
+current — the concrete resolved version is reported back, including Go
+pseudo-versions.
+
+`--build` goes further than downloading. For Go it compiles every package in the
+module so `GOCACHE` holds build artifacts and not just source. For npm and pnpm it
+lets dependency lifecycle scripts run so native addons are compiled; it does not
+run the package's own build script.
+
+`--verify` proves the result rather than assuming it, replaying the work with the
+network disabled (`GOPROXY=off`, or an `--offline` install against a frozen
+lockfile), so a cache that could not actually build offline fails loudly.
+
+Supported managers are `go`, `npm`, and `pnpm`. This is aimed at CI images,
+sandboxes, and air-gapped builds, where a later build must succeed with no network
+access.
+
 ### `version`
 
 Print version, commit hash, build date, and Go version.
