@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/flanksource/commons/collections"
 	"github.com/spf13/cobra"
 
 	"github.com/flanksource/repomap"
