@@ -595,6 +595,10 @@ type updateFakeRunner struct {
 	responses map[string]CommandResult
 	errors    map[string]error
 	commands  []Command
+	// succeedByDefault makes an unlisted command succeed with empty output,
+	// for callers that assert on which commands ran rather than what they
+	// printed. Left false, an unlisted command is an error.
+	succeedByDefault bool
 }
 
 func (r *updateFakeRunner) Run(_ context.Context, cmd Command) (CommandResult, error) {
@@ -610,7 +614,21 @@ func (r *updateFakeRunner) Run(_ context.Context, cmd Command) (CommandResult, e
 			return result, nil
 		}
 	}
+	if r.succeedByDefault {
+		return CommandResult{}, nil
+	}
 	return CommandResult{}, errors.New("unexpected command: " + key)
+}
+
+// ran returns each command as it would have been typed, in the order received.
+func (r *updateFakeRunner) ran() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, 0, len(r.commands))
+	for _, cmd := range r.commands {
+		out = append(out, cmd.String())
+	}
+	return out
 }
 
 func updateCandidateLabels(candidates []UpdateCandidate) []string {
