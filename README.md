@@ -107,6 +107,10 @@ repomap cache-warm go github.com/flanksource/clicky@v1.21.14
 # Take the current version, compile every package, and prove it works offline
 repomap cache-warm go github.com/flanksource/commons --build --verify
 
+# A Go dependency may also be a GitHub slug or a repository URL
+repomap cache-warm go flanksource/commons
+repomap cache-warm go https://github.com/flanksource/commons
+
 # Warm several npm packages into the pnpm store
 repomap cache-warm pnpm react@18.2.0 react-dom@18.2.0
 ```
@@ -117,7 +121,9 @@ closure into the machine's shared cache, then deletes the project. Nothing in th
 working tree is touched; what persists is the warmed cache (`GOMODCACHE`, the pnpm
 store, or the npm cache). Omit the version to take whatever the manager considers
 current — the concrete resolved version is reported back, including Go
-pseudo-versions.
+pseudo-versions. A Go dependency can be named as a module path, a GitHub
+`owner/repo` slug, or a repository URL; all three are canonicalised to the module
+path before the go toolchain sees them.
 
 `--build` goes further than downloading. For Go it compiles every package in the
 module so `GOCACHE` holds build artifacts and not just source. For npm and pnpm it
