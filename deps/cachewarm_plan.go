@@ -83,8 +83,5 @@ func (r WarmResult) displayVersion() string {
 	if r.Version != "" {
 		return r.Version
 	}
-	if _, version, err := parseWarmSpec(r.Spec); err == nil {
-		return version
-	}
-	return ""
+	return r.RequestedVersion
 }

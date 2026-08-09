@@ -149,6 +149,69 @@ func TestStepsRejectsIncompleteRequest(t *testing.T) {
 	}
 }
 
+func TestNormalizeSpec(t *testing.T) {
+	const module = "github.com/flanksource/commons"
+	cases := []struct {
+		spec string
+		want string
+	}{
+		// A canonical module path is already what go get wants.
+		{spec: "github.com/acme/lib@v1.2.3", want: "github.com/acme/lib@v1.2.3"},
+		{spec: "github.com/acme/lib", want: "github.com/acme/lib@latest"},
+		// A dot in the first element marks it as a host, so a vanity domain and a
+		// major-version suffix both survive untouched.
+		{spec: "gopkg.in/yaml.v3", want: "gopkg.in/yaml.v3@latest"},
+		{spec: "github.com/acme/lib/v2@v2.1.0", want: "github.com/acme/lib/v2@v2.1.0"},
+		// A bare owner/repo slug, the shape copied out of a GitHub page.
+		{spec: "flanksource/commons", want: module + "@latest"},
+		{spec: "flanksource/commons@v1.2.3", want: module + "@v1.2.3"},
+		{spec: "  flanksource/commons  ", want: module + "@latest"},
+		// The three URL shapes: browser, https clone, ssh clone.
+		{spec: "https://github.com/flanksource/commons", want: module + "@latest"},
+		{spec: "http://github.com/flanksource/commons/", want: module + "@latest"},
+		{spec: "https://github.com/flanksource/commons.git@v1.2.3", want: module + "@v1.2.3"},
+		{spec: "git@github.com:flanksource/commons.git", want: module + "@latest"},
+		{spec: "ssh://git@github.com/flanksource/commons.git", want: module + "@latest"},
+		{spec: "git://github.com/flanksource/commons.git", want: module + "@latest"},
+		// A slug on another forge keeps its host rather than gaining github.com.
+		{spec: "https://gitlab.com/acme/lib@v1.0.0", want: "gitlab.com/acme/lib@v1.0.0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.spec, func(t *testing.T) {
+			got, err := (Warmer{}).NormalizeSpec(tc.spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("NormalizeSpec(%q) = %q, want %q", tc.spec, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeSpecRejectsWhatCannotBeAModulePath(t *testing.T) {
+	cases := []struct {
+		name string
+		spec string
+	}{
+		// One element names no host, and inventing github.com/commons would warm
+		// something the user never asked for.
+		{name: "single element", spec: "commons"},
+		{name: "single element with version", spec: "commons@v1.2.3"},
+		{name: "port is not a module path", spec: "github.com/acme/lib:8080"},
+		{name: "empty", spec: "   "},
+		{name: "no version after the separator", spec: "flanksource/commons@"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := (Warmer{}).NormalizeSpec(tc.spec)
+			if err == nil {
+				t.Fatalf("NormalizeSpec(%q) = %q, want an error", tc.spec, got)
+			}
+		})
+	}
+}
+
 func TestWarmerIdentity(t *testing.T) {
 	if got := (Warmer{}).Manager(); got != manifest.ManagerGo {
 		t.Errorf("Manager() = %q, want %q", got, manifest.ManagerGo)

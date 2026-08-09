@@ -31,6 +31,10 @@ func (Warmer) Probe() *manifest.Command {
 	return &manifest.Command{Name: "pnpm", Args: []string{"--version"}}
 }
 
+// NormalizeSpec returns the spec verbatim: an npm name is already the name the
+// registry knows, and rewriting would only risk mangling a scoped @scope/pkg.
+func (Warmer) NormalizeSpec(spec string) (string, error) { return spec, nil }
+
 func (Warmer) Steps(req manifest.WarmRequest, probe string) ([]manifest.Step, error) {
 	cmds := node.Commands{
 		Binary:        "pnpm",

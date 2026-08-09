@@ -50,16 +50,21 @@ type WarmStep struct {
 
 type WarmResult struct {
 	Manager Manager `json:"manager"`
-	// Spec is the requested name@version; Version is what the manager resolved.
-	Spec     string     `json:"spec"`
-	Name     string     `json:"name"`
-	Version  string     `json:"version,omitempty"`
-	Packages int        `json:"packages,omitempty"`
-	Cache    string     `json:"cache,omitempty"`
-	Built    bool       `json:"built,omitempty"`
-	Verified bool       `json:"verified,omitempty"`
-	Steps    []WarmStep `json:"steps,omitempty"`
-	Error    string     `json:"error,omitempty"`
+	// Spec is the requested name@version, verbatim; Name is the manager's
+	// canonical form of it, and Version is what the manager resolved.
+	Spec string `json:"spec"`
+	Name string `json:"name"`
+	// RequestedVersion is the version the spec asked for ("latest" when it was
+	// omitted), kept so output has something to show when the read-back could not
+	// determine a concrete one.
+	RequestedVersion string     `json:"requested_version,omitempty"`
+	Version          string     `json:"version,omitempty"`
+	Packages         int        `json:"packages,omitempty"`
+	Cache            string     `json:"cache,omitempty"`
+	Built            bool       `json:"built,omitempty"`
+	Verified         bool       `json:"verified,omitempty"`
+	Steps            []WarmStep `json:"steps,omitempty"`
+	Error            string     `json:"error,omitempty"`
 	// SummaryError records a failure to read back what was warmed. The cache is
 	// still warm when this is set, so it does not fail the spec — but it is
 	// reported rather than swallowed.
@@ -128,12 +133,18 @@ func WarmCache(ctx context.Context, opts WarmOptions) ([]WarmResult, error) {
 
 func warmSpec(ctx context.Context, warmer manifest.Warmer, runner CommandRunner, spec string, opts WarmOptions, tk *task.Task) WarmResult {
 	result := WarmResult{Manager: warmer.Manager(), Spec: spec}
-	name, version, err := parseWarmSpec(spec)
+	normalized, err := warmer.NormalizeSpec(spec)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	name, version, err := manifest.SplitSpec(normalized)
 	if err != nil {
 		result.Error = err.Error()
 		return result
 	}
 	result.Name = name
+	result.RequestedVersion = version
 
 	dir, err := os.MkdirTemp("", "repomap-cache-warm-*")
 	if err != nil {
@@ -304,27 +315,4 @@ func warmCachePath(ctx context.Context, manager Manager, runner CommandRunner, d
 		return ""
 	}
 	return strings.TrimSpace(result.Stdout)
-}
-
-// parseWarmSpec splits "name@version". The split uses the last @ at a non-zero
-// index so a scoped npm name such as @scope/pkg keeps its leading @. An omitted
-// version becomes "latest" and the manager decides what that means; the concrete
-// version is read back after warming.
-func parseWarmSpec(spec string) (name, version string, err error) {
-	spec = strings.TrimSpace(spec)
-	if spec == "" {
-		return "", "", fmt.Errorf("empty dependency spec: expected name@version")
-	}
-	at := strings.LastIndex(spec, "@")
-	if at <= 0 {
-		if spec == "@" {
-			return "", "", fmt.Errorf("invalid dependency spec %q: expected name@version", spec)
-		}
-		return spec, "latest", nil
-	}
-	name, version = spec[:at], spec[at+1:]
-	if name == "" || version == "" {
-		return "", "", fmt.Errorf("invalid dependency spec %q: expected name@version", spec)
-	}
-	return name, version, nil
 }
