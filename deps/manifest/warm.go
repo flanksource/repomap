@@ -1,5 +1,33 @@
 package manifest
 
+import (
+	"fmt"
+	"strings"
+)
+
+// SplitSpec splits "name@version". The split uses the last @ at a non-zero index
+// so a scoped npm name such as @scope/pkg keeps its leading @. An omitted version
+// becomes "latest" and the manager decides what that means; the concrete version
+// is read back after warming.
+func SplitSpec(spec string) (name, version string, err error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return "", "", fmt.Errorf("empty dependency spec: expected name@version")
+	}
+	at := strings.LastIndex(spec, "@")
+	if at <= 0 {
+		if spec == "@" {
+			return "", "", fmt.Errorf("invalid dependency spec %q: expected name@version", spec)
+		}
+		return spec, "latest", nil
+	}
+	name, version = spec[:at], spec[at+1:]
+	if name == "" || version == "" {
+		return "", "", fmt.Errorf("invalid dependency spec %q: expected name@version", spec)
+	}
+	return name, version, nil
+}
+
 // WarmRequest describes one dependency to warm into the machine's shared
 // package cache. Dir is a scratch project the orchestrator has already created;
 // a Warmer only decides what to run inside it.
@@ -78,5 +106,10 @@ type Warmer interface {
 	// fail before it creates a scratch directory.
 	Binary() string
 	Probe() *Command
+	// NormalizeSpec canonicalises a user-supplied spec before it is split into
+	// name and version, so a manager can accept the shorthand its ecosystem's
+	// users actually type. Managers that take the spec verbatim return it
+	// unchanged.
+	NormalizeSpec(spec string) (string, error)
 	Steps(req WarmRequest, probe string) ([]Step, error)
 }

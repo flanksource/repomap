@@ -32,6 +32,10 @@ the warmed cache (GOMODCACHE, the pnpm store, or the npm cache).
 Omit the version to take whatever the manager considers current. The concrete
 resolved version is reported back, including Go pseudo-versions.
 
+A Go dependency can be given as a module path, as a GitHub owner/repo slug, or as
+a repository URL — all three are canonicalised to the module path before the go
+toolchain sees them.
+
 Use --build to go further than downloading. For Go it compiles every package in
 the module so GOCACHE holds the build artifacts, not just the source. For npm and
 pnpm it lets dependency lifecycle scripts run so native addons are compiled. It
@@ -47,6 +51,8 @@ must succeed with no network access.
 EXAMPLES:
   repomap cache-warm go github.com/flanksource/clicky@v1.21.14
   repomap cache-warm go github.com/flanksource/commons --build --verify
+  repomap cache-warm go flanksource/commons
+  repomap cache-warm go https://github.com/flanksource/commons
   repomap cache-warm pnpm react@18.2.0 react-dom@18.2.0
   repomap cache-warm npm @flanksource/icons@1.0.0 --verify
   repomap cache-warm go github.com/flanksource/clicky@v1.21.14 --json`)
