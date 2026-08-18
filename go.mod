@@ -6,11 +6,11 @@ require (
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/charmbracelet/bubbletea v1.3.10
-	github.com/flanksource/clicky v1.21.54
-	github.com/flanksource/commons v1.55.0
+	github.com/flanksource/clicky v1.21.55
+	github.com/flanksource/commons v1.56.0
 	github.com/ghodss/yaml v1.0.0
 	github.com/goccy/go-yaml v1.19.2
-	github.com/google/cel-go v0.27.0
+	github.com/google/cel-go v0.31.0
 	github.com/google/go-containerregistry v0.21.6
 	github.com/samber/lo v1.53.0
 	github.com/samber/oops v1.21.0
@@ -67,8 +67,8 @@ require (
 	github.com/emirpasic/gods/v2 v2.0.0-alpha // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/fatih/color v1.18.0 // indirect
-	github.com/flanksource/gomplate/v3 v3.24.86 // indirect
-	github.com/flanksource/is-healthy v1.0.88 // indirect
+	github.com/flanksource/gomplate/v3 v3.24.89 // indirect
+	github.com/flanksource/is-healthy v1.0.90 // indirect
 	github.com/flanksource/kubectl-neat v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
@@ -165,6 +165,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
+	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/net v0.56.0 // indirect
