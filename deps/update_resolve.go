@@ -62,19 +62,25 @@ func resolveRawVersionsByKey(ctx context.Context, candidates []UpdateCandidate, 
 
 	results := make([]rawVersionResult, len(keys))
 	group := task.StartGroup[int]("Resolving dependency versions", task.WithConcurrency(updateResolveConcurrency))
-	for i, key := range keys {
-		idx, candidate := i, rep[key]
-		group.Add(updateTaskName(candidate), func(_ flanksourceContext.Context, tk *task.Task) (int, error) {
+	for _, lookup := range groupVersionLookups(keys, rep) {
+		indexes, candidates := lookup.indexes, lookup.candidates
+		group.Add(lookup.name, func(_ flanksourceContext.Context, tk *task.Task) (int, error) {
 			tk.Infof("looking up published versions")
-			versions, err := resolveCandidateRawVersions(ctx, opts, candidate)
-			results[idx] = rawVersionResult{versions: versions, err: err}
-			if err != nil {
-				tk.Warnf("%s", err.Error())
+			var failed bool
+			for i, candidate := range candidates {
+				versions, err := lookup.resolve(ctx, opts, candidate)
+				results[indexes[i]] = rawVersionResult{versions: versions, err: err}
+				if err != nil {
+					tk.Warnf("%s: %s", candidate.Name, err.Error())
+					failed = true
+				}
+			}
+			if failed {
 				tk.Warning()
 			} else {
 				tk.Success()
 			}
-			return idx, nil
+			return indexes[0], nil
 		})
 	}
 	_, _ = group.GetResults()
@@ -84,6 +90,56 @@ func resolveRawVersionsByKey(ctx context.Context, candidates []UpdateCandidate, 
 		byKey[key] = results[i]
 	}
 	return byKey
+}
+
+// versionLookup is one unit of version resolution: usually a single dependency,
+// but Go modules sharing a directory resolve together in one `go list` run.
+type versionLookup struct {
+	name       string
+	indexes    []int
+	candidates []UpdateCandidate
+	resolve    func(context.Context, UpdateOptions, UpdateCandidate) ([]string, error)
+}
+
+// groupVersionLookups collapses the Go modules of one directory into a single
+// lookup. `go list -m -versions` accepts several modules per invocation, and one
+// toolchain start-up beats one per dependency.
+func groupVersionLookups(keys []string, rep map[string]UpdateCandidate) []versionLookup {
+	var lookups []versionLookup
+	goLookupByDir := map[string]int{}
+	for i, key := range keys {
+		candidate := rep[key]
+		if candidate.Manager != ManagerGo {
+			lookups = append(lookups, versionLookup{
+				name:       updateTaskName(candidate),
+				indexes:    []int{i},
+				candidates: []UpdateCandidate{candidate},
+				resolve:    resolveCandidateRawVersions,
+			})
+			continue
+		}
+		if j, ok := goLookupByDir[candidate.Dir]; ok {
+			lookups[j].indexes = append(lookups[j].indexes, i)
+			lookups[j].candidates = append(lookups[j].candidates, candidate)
+			continue
+		}
+		goLookupByDir[candidate.Dir] = len(lookups)
+		lookups = append(lookups, versionLookup{
+			name:       updateTaskName(candidate),
+			indexes:    []int{i},
+			candidates: []UpdateCandidate{candidate},
+		})
+	}
+	for i := range lookups {
+		if lookups[i].resolve != nil {
+			continue
+		}
+		lookups[i].resolve = newGoModuleVersionLookup(lookups[i].candidates)
+		if len(lookups[i].candidates) > 1 {
+			lookups[i].name = fmt.Sprintf("go %d modules", len(lookups[i].candidates))
+		}
+	}
+	return lookups
 }
 
 // resolveCandidateRawVersions returns a candidate source's published versions

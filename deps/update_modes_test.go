@@ -200,6 +200,66 @@ func TestUpdate_FilterThenChecksOnlyFilteredSet(t *testing.T) {
 	}
 }
 
+func TestUpdate_BuildsOneImageResolverPerRun(t *testing.T) {
+	setupImageRepo(t, map[string]string{
+		"apps/a.yaml":           deploymentUpdateFixture,
+		"apps/b.yaml":           deploymentUpdateFixture,
+		"apps/helmrelease.yaml": helmReleaseUpdateFixture,
+	})
+	built := 0
+	restore := stubDefaultImageResolver(t, func() ImageVersionResolver {
+		built++
+		return fakeImageVersionResolver{
+			"nginx":                     {"1.27.0", "1.25.3"},
+			"ghcr.io/flanksource/proxy": {"v0.5.0", "v0.4.1"},
+			"podinfo":                   {"6.6.0", "6.5.0"},
+		}
+	})
+	defer restore()
+
+	// ImageResolver is deliberately left nil so Update takes the default path.
+	plans, err := Update(context.Background(), ".", UpdateOptions{
+		Managers: []Manager{ManagerImage, ManagerHelm},
+		Check:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) == 0 {
+		t.Fatal("expected image/helm plans, got none")
+	}
+	if built != 1 {
+		t.Fatalf("image resolvers built = %d, want 1 shared across every candidate", built)
+	}
+}
+
+func TestUpdate_SkipsImageResolverForPackageManagerOnlyRuns(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	runGit(t, dir, "init")
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.22\n\nrequire github.com/acme/lib v1.0.0\n")
+
+	built := 0
+	restore := stubDefaultImageResolver(t, func() ImageVersionResolver {
+		built++
+		return fakeImageVersionResolver{}
+	})
+	defer restore()
+
+	if _, err := Update(context.Background(), ".", UpdateOptions{
+		Managers: []Manager{ManagerGo},
+		Check:    true,
+		Runner: &updateFakeRunner{responses: map[string]CommandResult{
+			"go list -m -versions -json github.com/acme/lib": {Stdout: `{"Versions":["v1.0.0","v1.1.0"]}`},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if built != 0 {
+		t.Fatalf("image resolvers built = %d, want 0 for a go-only run", built)
+	}
+}
+
 func TestUpdate_NoFiltersMatchesAll(t *testing.T) {
 	setupImageRepo(t, map[string]string{"apps/helmrelease.yaml": helmReleaseUpdateFixture})
 

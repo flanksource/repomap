@@ -35,7 +35,9 @@ type DepsUpdateOptions struct {
 	Selector  []string `json:"selector,omitempty" flag:"selector,l" help:"Filter image/helm targets by label selector, e.g. app=nginx"`
 	Image     []string `json:"image,omitempty" flag:"image" help:"Only container images matching this repo pattern (MatchItem syntax)"`
 	Chart     []string `json:"chart,omitempty" flag:"chart" help:"Only Helm charts matching this name (MatchItem syntax)"`
-	Latest    bool     `json:"latest,omitempty" flag:"latest" help:"Resolve each matched dependency to its highest stable version"`
+	Latest    bool     `json:"latest,omitempty" flag:"latest" help:"Resolve each matched dependency to its highest stable version without prompting"`
+	Stable    bool     `json:"stable,omitempty" flag:"stable" help:"Alias for --latest"`
+	Yes       bool     `json:"yes,omitempty" flag:"yes,y" help:"Skip the selection tree and apply the highest stable version to every matched dependency"`
 	Version   string   `json:"version,omitempty" flag:"version" help:"Apply this concrete version to all matched dependencies"`
 	Check     bool     `json:"check" flag:"check" help:"Resolve and list available updates without prompting or writing"`
 	DryRun    bool     `json:"dry_run" flag:"dry-run" help:"Show planned dependency updates without running package-manager commands"`
@@ -108,13 +110,26 @@ Kubernetes/Flux manifests, including HelmRelease spec.chartRef OCIRepository and
 HelmChart sources) can be further narrowed with --kind/--namespace/--name/
 --selector and the --image/--chart name patterns.
 
-By default repomap prompts for which dependencies and versions to apply. A
-dependency declared in several manifests at the same version is confirmed once
-and the chosen version written to every occurrence; occurrences sitting at
-different current versions are still confirmed separately. Use --latest to
-resolve each to its highest stable version, or --version to apply a concrete
-version, both non-interactively. Applied updates are staged with git add
-(manifests plus lockfiles); --dry-run and --check never stage.
+By default repomap opens a selection tree grouping dependencies under their
+manifest. Each row shows the version it will move to — the highest stable
+release — and both decisions are made on that one screen, so nothing is applied
+until you confirm:
+
+  space       toggle the row          n / s   target the highest stable version
+  a           toggle the manifest     v       pick a specific version
+  ctrl+a      toggle everything       /       filter
+  h / l       collapse / expand       enter   confirm      esc  cancel
+
+Rows with only pre-releases newer than the current version show "no stable
+version" and need an explicit pick with v. A dependency declared in several
+manifests at the same version is one decision: picking its version answers every
+occurrence. Occurrences sitting at different current versions stay separate.
+
+Use -y (or --latest/--stable) to skip the tree and take the highest stable
+version for everything, or --version to apply a concrete version. Confirmed
+updates are applied together, batching the dependencies of a manifest into one
+package-manager run, then staged with git add (manifests plus lockfiles);
+--dry-run and --check never stage.
 
 Use --check to list updateable dependencies without prompting or writing.
 
@@ -124,6 +139,7 @@ EXAMPLES:
   repomap deps update 'github.com/flanksource/*'
   repomap deps update '*' --check
   repomap deps update --manager helm -k HelmRelease --latest
+  repomap deps update -y
   repomap deps update --manager image -n default --version 1.27.0
   repomap deps update 'path:apps/*/package.json'
   repomap deps update 'helm:mission-control' --manager helm
@@ -189,7 +205,9 @@ func runDepsUpdate(ctx context.Context, opts DepsUpdateOptions) (any, error) {
 		Selector:  opts.Selector,
 		Image:     opts.Image,
 		Chart:     opts.Chart,
-		Latest:    opts.Latest,
+		// --stable and -y both mean "highest stable, no prompting", which is
+		// exactly what --latest already does.
+		Latest:    opts.Latest || opts.Stable || opts.Yes,
 		Version:   opts.Version,
 		Check:     opts.Check,
 		DryRun:    opts.DryRun,

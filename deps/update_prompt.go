@@ -2,14 +2,13 @@ package deps
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api"
 )
 
-func promptUpdateCandidates(choices []UpdateChoice) ([]UpdateChoice, bool) {
+func promptUpdateCandidates(choices []UpdateChoice) ([]UpdateSelection, bool) {
 	return runUpdateChoiceTreePicker(choices)
 }
 
@@ -20,23 +19,6 @@ func promptUpdateCandidates(choices []UpdateChoice) ([]UpdateChoice, bool) {
 func (c UpdateChoice) versionPromptKey() string {
 	parts := append([]string{string(c.Candidate.Manager), c.Candidate.Name, c.Candidate.Current}, c.Versions...)
 	return strings.Join(parts, "\x00")
-}
-
-// groupChoicesForVersionPrompt collapses occurrences sharing a version question
-// into one group, keeping the input order of each group's first occurrence.
-func groupChoicesForVersionPrompt(choices []UpdateChoice) [][]UpdateChoice {
-	indexByKey := map[string]int{}
-	var groups [][]UpdateChoice
-	for _, choice := range choices {
-		key := choice.versionPromptKey()
-		if i, ok := indexByKey[key]; ok {
-			groups[i] = append(groups[i], choice)
-			continue
-		}
-		indexByKey[key] = len(groups)
-		groups = append(groups, []UpdateChoice{choice})
-	}
-	return groups
 }
 
 func newUpdateVersionPrompt(group []UpdateChoice) UpdateVersionPrompt {
@@ -84,37 +66,3 @@ func promptUpdateVersion(prompt UpdateVersionPrompt) (string, bool) {
 	})
 }
 
-type updateChoiceFileGroup struct {
-	File    string
-	Choices []UpdateChoice
-}
-
-func groupUpdateChoicesByFile(choices []UpdateChoice) []updateChoiceFileGroup {
-	byFile := map[string][]UpdateChoice{}
-	for _, choice := range choices {
-		file := choice.Candidate.File
-		byFile[file] = append(byFile[file], choice)
-	}
-	files := make([]string, 0, len(byFile))
-	for file := range byFile {
-		files = append(files, file)
-	}
-	sort.Strings(files)
-	groups := make([]updateChoiceFileGroup, 0, len(files))
-	for _, file := range files {
-		groupChoices := append([]UpdateChoice(nil), byFile[file]...)
-		sort.SliceStable(groupChoices, func(i, j int) bool {
-			return groupChoices[i].Candidate.less(groupChoices[j].Candidate)
-		})
-		groups = append(groups, updateChoiceFileGroup{File: file, Choices: groupChoices})
-	}
-	return groups
-}
-
-func sortSelectedUpdateChoicesByFile(choices []UpdateChoice) []UpdateChoice {
-	var out []UpdateChoice
-	for _, group := range groupUpdateChoicesByFile(choices) {
-		out = append(out, group.Choices...)
-	}
-	return out
-}

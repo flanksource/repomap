@@ -6,8 +6,8 @@ require (
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/charmbracelet/bubbletea v1.3.10
-	github.com/flanksource/clicky v1.21.54
-	github.com/flanksource/commons v1.55.0
+	github.com/flanksource/clicky v1.21.55
+	github.com/flanksource/commons v1.56.0
 	github.com/ghodss/yaml v1.0.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/cel-go v0.27.0
@@ -117,7 +117,6 @@ require (
 	github.com/olekukonko/errors v1.2.0 // indirect
 	github.com/olekukonko/ll v0.1.7 // indirect
 	github.com/olekukonko/tablewriter v1.1.4 // indirect
-	github.com/onsi/ginkgo/v2 v2.28.1 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/patrickmn/go-cache v2.1.1-0.20191004192108-46f407853014+incompatible // indirect

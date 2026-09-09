@@ -16,6 +16,11 @@ import (
 
 const updateResolveConcurrency = 8
 
+// updateApplyConcurrency is lower than the resolve concurrency: `go get` and
+// `npm install` are far heavier than a version lookup and contend on the shared
+// module and package caches.
+const updateApplyConcurrency = 4
+
 var supportedUpdateManagers = map[Manager]bool{
 	ManagerGo:    true,
 	ManagerNPM:   true,
@@ -24,7 +29,12 @@ var supportedUpdateManagers = map[Manager]bool{
 	ManagerHelm:  true,
 }
 
-type CandidateSelector func([]UpdateChoice) ([]UpdateChoice, bool)
+// CandidateSelector picks which dependencies to update and, for each, the
+// version to move it to. Both decisions come from one screen so a slow update
+// never sits between two questions.
+type CandidateSelector func([]UpdateChoice) ([]UpdateSelection, bool)
+
+// VersionSelector answers a single version question.
 type VersionSelector func(UpdateVersionPrompt) (string, bool)
 
 type ImageVersionResolver interface {
@@ -32,6 +42,10 @@ type ImageVersionResolver interface {
 	ResolveLatestVersions(context.Context, imageupdate.UpdateTarget) (imageupdate.LatestVersions, error)
 	NewImageValue(context.Context, imageupdate.UpdateTarget, string) (string, error)
 }
+
+// newDefaultImageResolver builds the resolver a run shares across every image
+// and Helm candidate. It is a var so tests can count how many a run constructs.
+var newDefaultImageResolver = func() ImageVersionResolver { return imageupdate.NewResolver() }
 
 type UpdateOptions struct {
 	Managers []Manager
@@ -56,7 +70,6 @@ type UpdateOptions struct {
 	Runner           CommandRunner
 	ImageResolver    ImageVersionResolver
 	SelectCandidates CandidateSelector
-	SelectVersion    VersionSelector
 }
 
 // DiscoverFilter narrows image/helm targets during discovery by Kubernetes
@@ -83,6 +96,14 @@ type UpdateChoice struct {
 	Versions         []string        `json:"versions"`
 	LatestStable     string          `json:"latest_stable,omitempty"`
 	LatestPrerelease string          `json:"latest_prerelease,omitempty"`
+}
+
+// UpdateSelection is a dependency chosen for update together with the version
+// it should move to. An empty Version means the dependency was selected but has
+// no stable version to move to.
+type UpdateSelection struct {
+	UpdateChoice
+	Version string `json:"version"`
 }
 
 // UpdateVersionPrompt is a single version question standing in for every
@@ -123,6 +144,12 @@ func Update(ctx context.Context, path string, opts UpdateOptions) ([]UpdatePlan,
 	patterns := splitUpdatePatterns(opts.Filters)
 	if opts.Runner == nil {
 		opts.Runner = ExecRunner{}
+	}
+	// One resolver per run keeps its version memo and singleflight alive across
+	// every candidate, and builds the registry keychain (which shells out to
+	// Docker credential helpers) once instead of per candidate.
+	if opts.ImageResolver == nil && len(imageUpdateManagers(managers)) > 0 {
+		opts.ImageResolver = newDefaultImageResolver()
 	}
 
 	filter := DiscoverFilter{
@@ -181,33 +208,40 @@ func Update(ctx context.Context, path string, opts UpdateOptions) ([]UpdatePlan,
 		}
 		return orderedUpdatePlans(candidates, plansByKey), nil
 	}
-	selectedKeys := map[string]UpdateChoice{}
-	for _, choice := range selected {
-		selectedKeys[choice.Candidate.key()] = choice
+	selectedKeys := map[string]bool{}
+	for _, selection := range selected {
+		selectedKeys[selection.Candidate.key()] = true
 	}
 	for _, choice := range choices {
-		if _, ok := selectedKeys[choice.Candidate.key()]; !ok {
+		if !selectedKeys[choice.Candidate.key()] {
 			plansByKey[choice.Candidate.key()] = skippedUpdatePlan(choice.Candidate, "not selected")
 		}
 	}
 
-	selectVersion := opts.SelectVersion
-	if selectVersion == nil {
-		selectVersion = promptUpdateVersion
-	}
-	// A dependency repeated across manifests poses one question, so occurrences
-	// sharing a version prompt are confirmed once and the answer applied to all.
-	for _, group := range groupChoicesForVersionPrompt(sortSelectedUpdateChoicesByFile(selected)) {
-		version, ok := selectVersion(newUpdateVersionPrompt(group))
-		for _, choice := range group {
-			if !ok || strings.TrimSpace(version) == "" {
-				plansByKey[choice.Candidate.key()] = skippedUpdatePlan(choice.Candidate, "no version selected")
-				continue
-			}
-			plansByKey[choice.Candidate.key()] = applyDependencyUpdate(ctx, choice.Candidate, version, opts)
+	// Selection carries its own version, so every question has already been
+	// answered by the time anything is applied.
+	requests := make([]updateRequest, 0, len(selected))
+	for _, selection := range selected {
+		version := strings.TrimSpace(selection.Version)
+		if version == "" {
+			plansByKey[selection.Candidate.key()] = skippedUpdatePlan(selection.Candidate, noVersionSelectedReason(selection))
+			continue
 		}
+		requests = append(requests, updateRequest{Candidate: selection.Candidate, Version: version})
+	}
+	for key, plan := range applyUpdateRequests(ctx, requests, opts) {
+		plansByKey[key] = plan
 	}
 	return orderedUpdatePlans(candidates, plansByKey), nil
+}
+
+// noVersionSelectedReason distinguishes a dependency the user left unanswered
+// from one that has no stable version to offer in the first place.
+func noVersionSelectedReason(selection UpdateSelection) string {
+	if selection.LatestStable == "" {
+		return "no stable version available"
+	}
+	return "no version selected"
 }
 
 func DiscoverUpdateCandidates(path string, managers []Manager, filter DiscoverFilter) ([]UpdateCandidate, error) {

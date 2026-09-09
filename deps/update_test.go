@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/flanksource/repomap/imageupdate"
 )
@@ -164,12 +166,7 @@ func TestUpdateDryRunBuildsPackageManagerCommand(t *testing.T) {
 		Filters:  []string{"left-pad"},
 		DryRun:   true,
 		Runner:   runner,
-		SelectCandidates: func(choices []UpdateChoice) ([]UpdateChoice, bool) {
-			return choices, true
-		},
-		SelectVersion: func(UpdateVersionPrompt) (string, bool) {
-			return "1.4.0", true
-		},
+		SelectCandidates: selectAllAt("1.4.0"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -207,7 +204,7 @@ func TestUpdateSkipsCandidatesWithoutChangesBeforePrompt(t *testing.T) {
 		Filters:  []string{"left-pad"},
 		DryRun:   true,
 		Runner:   runner,
-		SelectCandidates: func([]UpdateChoice) ([]UpdateChoice, bool) {
+		SelectCandidates: func([]UpdateChoice) ([]UpdateSelection, bool) {
 			t.Fatal("no-change candidates must not be shown for selection")
 			return nil, false
 		},
@@ -237,13 +234,9 @@ func TestUpdateCheckListsUpdatesWithoutPrompting(t *testing.T) {
 		Filters:  []string{"left-pad"},
 		Check:    true,
 		Runner:   runner,
-		SelectCandidates: func([]UpdateChoice) ([]UpdateChoice, bool) {
+		SelectCandidates: func([]UpdateChoice) ([]UpdateSelection, bool) {
 			t.Fatal("--check must not prompt for dependency selection")
 			return nil, false
-		},
-		SelectVersion: func(UpdateVersionPrompt) (string, bool) {
-			t.Fatal("--check must not prompt for a version")
-			return "", false
 		},
 	})
 	if err != nil {
@@ -356,14 +349,11 @@ func TestUpdateImageDryRunUsesImageVersionResolver(t *testing.T) {
 		Filters:       []string{"*nginx*"},
 		DryRun:        true,
 		ImageResolver: fakeImageVersionResolver{"nginx": []string{"1.27.0", "1.25.3"}},
-		SelectCandidates: func(choices []UpdateChoice) ([]UpdateChoice, bool) {
+		SelectCandidates: func(choices []UpdateChoice) ([]UpdateSelection, bool) {
 			if len(choices) != 1 {
 				t.Fatalf("choices = %#v, want exactly nginx", choices)
 			}
-			return choices, true
-		},
-		SelectVersion: func(UpdateVersionPrompt) (string, bool) {
-			return "1.27.0", true
+			return selectAllAt("1.27.0")(choices)
 		},
 	})
 	if err != nil {
@@ -400,12 +390,7 @@ func TestUpdateStagesChangedFilesAfterWrite(t *testing.T) {
 		Managers: []Manager{ManagerNPM},
 		Filters:  []string{"left-pad"},
 		Runner:   runner,
-		SelectCandidates: func(choices []UpdateChoice) ([]UpdateChoice, bool) {
-			return choices, true
-		},
-		SelectVersion: func(UpdateVersionPrompt) (string, bool) {
-			return "1.4.0", true
-		},
+		SelectCandidates: selectAllAt("1.4.0"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -436,6 +421,289 @@ func TestUpdateStagesChangedFilesAfterWrite(t *testing.T) {
 	}
 }
 
+// Dependencies sharing a manifest rewrite the same files, so they stage once
+// together rather than each running an identical `git add`.
+func TestUpdateStagesOncePerFileSet(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, filepath.Join(dir, "package.json"), `{
+  "name": "web",
+  "dependencies": {"left-pad": "^1.3.0", "right-pad": "^2.0.0", "mid-pad": "^3.0.0"}
+}`)
+	writeFile(t, filepath.Join(dir, "package-lock.json"), `{"lockfileVersion": 3}`)
+	runner := &updateFakeRunner{
+		succeedByDefault: true,
+		responses: map[string]CommandResult{
+			"npm view left-pad versions --json":  {Stdout: `["1.4.0","1.3.0"]`},
+			"npm view right-pad versions --json": {Stdout: `["2.1.0","2.0.0"]`},
+			"npm view mid-pad versions --json":   {Stdout: `["3.1.0","3.0.0"]`},
+		},
+	}
+	plans, err := Update(context.Background(), dir, UpdateOptions{
+		Managers: []Manager{ManagerNPM},
+		Runner:   runner,
+		SelectCandidates: selectAll(func(choice UpdateChoice) string { return choice.Versions[0] }),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 3 {
+		t.Fatalf("plans = %d, want one per dependency: %#v", len(plans), plans)
+	}
+	gitAdds := 0
+	for _, cmd := range runner.commands {
+		if cmd.Name == "git" {
+			gitAdds++
+		}
+	}
+	if gitAdds != 1 {
+		t.Fatalf("git add invocations = %d, want 1 for three deps in one manifest", gitAdds)
+	}
+	for _, plan := range plans {
+		if !plan.Written {
+			t.Fatalf("plan = %#v, want written", plan)
+		}
+		if strings.Join(plan.Staged, ",") != "package-lock.json,package.json" {
+			t.Fatalf("staged = %#v, want every plan to carry the shared file set", plan.Staged)
+		}
+	}
+}
+
+// Dependencies in one manifest section update in a single package-manager run.
+func TestUpdateBatchesSameManifestIntoOneCommand(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), `module example.com/app
+
+go 1.22
+
+require (
+	github.com/acme/lib v1.0.0
+	github.com/acme/tool v1.5.0
+)
+`)
+	runner := &updateFakeRunner{
+		succeedByDefault: true,
+		responses: map[string]CommandResult{
+			"go list -m -versions -json github.com/acme/lib":  {Stdout: `{"Versions":["v1.0.0","v1.1.0"]}`},
+			"go list -m -versions -json github.com/acme/tool": {Stdout: `{"Versions":["v1.5.0","v1.6.0"]}`},
+		},
+	}
+	plans, err := Update(context.Background(), dir, UpdateOptions{
+		Managers: []Manager{ManagerGo},
+		Runner:   runner,
+		SelectCandidates: selectAll(func(choice UpdateChoice) string { return choice.Versions[0] }),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 2 {
+		t.Fatalf("plans = %d, want 2: %#v", len(plans), plans)
+	}
+	var gets []string
+	for _, cmd := range runner.commands {
+		if cmd.Name == "go" && len(cmd.Args) > 0 && cmd.Args[0] == "get" {
+			gets = append(gets, cmd.String())
+		}
+	}
+	if len(gets) != 1 {
+		t.Fatalf("go get invocations = %d, want 1 batched run: %#v", len(gets), gets)
+	}
+	if !strings.Contains(gets[0], "github.com/acme/lib@v1.1.0") || !strings.Contains(gets[0], "github.com/acme/tool@v1.6.0") {
+		t.Fatalf("batched command = %q, want both modules", gets[0])
+	}
+	for _, plan := range plans {
+		if !plan.Written {
+			t.Fatalf("plan = %#v, want written", plan)
+		}
+	}
+}
+
+// The --save-* flag applies to the whole invocation, so sections never merge.
+func TestUpdateSeparatesBatchesByScope(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "package.json"), `{
+  "name": "web",
+  "dependencies": {"left-pad": "^1.3.0"},
+  "devDependencies": {"right-pad": "^2.0.0"}
+}`)
+	writeFile(t, filepath.Join(dir, "package-lock.json"), `{"lockfileVersion": 3}`)
+	runner := &updateFakeRunner{
+		succeedByDefault: true,
+		responses: map[string]CommandResult{
+			"npm view left-pad versions --json":  {Stdout: `["1.4.0","1.3.0"]`},
+			"npm view right-pad versions --json": {Stdout: `["2.1.0","2.0.0"]`},
+		},
+	}
+	if _, err := Update(context.Background(), dir, UpdateOptions{
+		Managers: []Manager{ManagerNPM},
+		Runner:   runner,
+		SelectCandidates: selectAll(func(choice UpdateChoice) string { return choice.Versions[0] }),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var installs []string
+	for _, cmd := range runner.commands {
+		if cmd.Name == "npm" && len(cmd.Args) > 0 && cmd.Args[0] == "install" {
+			installs = append(installs, cmd.String())
+		}
+	}
+	sort.Strings(installs)
+	want := []string{
+		"npm install --package-lock-only --ignore-scripts --save-dev right-pad@2.1.0",
+		"npm install --package-lock-only --ignore-scripts --save-prod left-pad@1.4.0",
+	}
+	if strings.Join(installs, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("installs =\n%s\nwant\n%s", strings.Join(installs, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// A failed batch cannot say which dependency broke, so it retries individually.
+func TestUpdateBatchFailureFallsBackPerDependency(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), `module example.com/app
+
+go 1.22
+
+require (
+	github.com/acme/lib v1.0.0
+	github.com/acme/tool v1.5.0
+)
+`)
+	runner := &updateFakeRunner{
+		succeedByDefault: true,
+		responses: map[string]CommandResult{
+			"go list -m -versions -json github.com/acme/lib":  {Stdout: `{"Versions":["v1.0.0","v1.1.0"]}`},
+			"go list -m -versions -json github.com/acme/tool": {Stdout: `{"Versions":["v1.5.0","v1.6.0"]}`},
+		},
+		errors: map[string]error{
+			"go get github.com/acme/lib@v1.1.0 github.com/acme/tool@v1.6.0": errors.New("batch failed"),
+			"go get github.com/acme/tool@v1.6.0":                            errors.New("module tool is broken"),
+		},
+	}
+	plans, err := Update(context.Background(), dir, UpdateOptions{
+		Managers: []Manager{ManagerGo},
+		Runner:   runner,
+		SelectCandidates: selectAll(func(choice UpdateChoice) string { return choice.Versions[0] }),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]UpdatePlan{}
+	for _, plan := range plans {
+		byName[plan.Name] = plan
+	}
+	if got := byName["github.com/acme/lib"]; !got.Written || got.Skipped != "" {
+		t.Fatalf("healthy dependency = %#v, want written despite its sibling failing", got)
+	}
+	if got := byName["github.com/acme/tool"]; got.Written || got.Skipped != "module tool is broken" {
+		t.Fatalf("broken dependency = %#v, want its own error", got)
+	}
+}
+
+// Updates to one manifest race on its lockfile, so a directory runs serially
+// while separate directories overlap.
+func TestUpdateSerializesPerDirectoryAndParallelizesAcrossDirectories(t *testing.T) {
+	dir := t.TempDir()
+	projects := []string{"api", "web", "cli"}
+	for _, project := range projects {
+		writeFile(t, filepath.Join(dir, project, "package.json"), `{
+  "name": "`+project+`",
+  "dependencies": {"left-pad": "^1.3.0"},
+  "devDependencies": {"right-pad": "^2.0.0"}
+}`)
+		writeFile(t, filepath.Join(dir, project, "package-lock.json"), `{"lockfileVersion": 3}`)
+	}
+
+	tracker := newConcurrencyTracker(len(projects))
+	runner := &updateFakeRunner{
+		succeedByDefault: true,
+		responses: map[string]CommandResult{
+			"npm view left-pad versions --json":  {Stdout: `["1.4.0","1.3.0"]`},
+			"npm view right-pad versions --json": {Stdout: `["2.1.0","2.0.0"]`},
+		},
+		beforeRun: func(cmd Command) {
+			if cmd.Name == "npm" && len(cmd.Args) > 0 && cmd.Args[0] == "install" {
+				tracker.enter(t, cmd.Dir)
+			}
+		},
+		afterRun: func(cmd Command) {
+			if cmd.Name == "npm" && len(cmd.Args) > 0 && cmd.Args[0] == "install" {
+				tracker.leave(cmd.Dir)
+			}
+		},
+	}
+
+	if _, err := Update(context.Background(), dir, UpdateOptions{
+		Managers: []Manager{ManagerNPM},
+		Runner:   runner,
+		SelectCandidates: selectAll(func(choice UpdateChoice) string { return choice.Versions[0] }),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := tracker.maxConcurrentDirs(); got < 2 {
+		t.Fatalf("max overlapping directories = %d, want at least 2 running in parallel", got)
+	}
+}
+
+// concurrencyTracker fails the test if one directory ever has two commands in
+// flight, and records how many distinct directories overlapped.
+type concurrencyTracker struct {
+	mu       sync.Mutex
+	inFlight map[string]int
+	maxDirs  int
+	arrived  chan struct{}
+	want     int
+}
+
+func newConcurrencyTracker(want int) *concurrencyTracker {
+	return &concurrencyTracker{inFlight: map[string]int{}, arrived: make(chan struct{}), want: want}
+}
+
+func (c *concurrencyTracker) enter(t *testing.T, dir string) {
+	t.Helper()
+	c.mu.Lock()
+	c.inFlight[dir]++
+	if c.inFlight[dir] > 1 {
+		c.mu.Unlock()
+		t.Errorf("two commands ran concurrently in %q; a manifest must be updated serially", dir)
+		return
+	}
+	if len(c.inFlight) > c.maxDirs {
+		c.maxDirs = len(c.inFlight)
+	}
+	reached := len(c.inFlight) >= min(c.want, updateApplyConcurrency)
+	c.mu.Unlock()
+
+	if reached {
+		// Release everyone once enough lanes are in flight to prove overlap.
+		select {
+		case <-c.arrived:
+		default:
+			close(c.arrived)
+		}
+		return
+	}
+	select {
+	case <-c.arrived:
+	case <-time.After(2 * time.Second):
+	}
+}
+
+func (c *concurrencyTracker) leave(dir string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.inFlight[dir]--
+	if c.inFlight[dir] <= 0 {
+		delete(c.inFlight, dir)
+	}
+}
+
+func (c *concurrencyTracker) maxConcurrentDirs() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.maxDirs
+}
+
 func TestUpdateDryRunDoesNotStage(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "package.json"), `{
@@ -453,12 +721,7 @@ func TestUpdateDryRunDoesNotStage(t *testing.T) {
 		Filters:  []string{"left-pad"},
 		DryRun:   true,
 		Runner:   runner,
-		SelectCandidates: func(choices []UpdateChoice) ([]UpdateChoice, bool) {
-			return choices, true
-		},
-		SelectVersion: func(UpdateVersionPrompt) (string, bool) {
-			return "1.4.0", true
-		},
+		SelectCandidates: selectAllAt("1.4.0"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -503,12 +766,7 @@ func TestUpdateImageStagesEditedManifest(t *testing.T) {
 		Managers:      []Manager{ManagerImage},
 		Filters:       []string{"*nginx*"},
 		ImageResolver: fakeImageVersionResolver{"nginx": []string{"1.27.0", "1.25.3"}},
-		SelectCandidates: func(choices []UpdateChoice) ([]UpdateChoice, bool) {
-			return choices, true
-		},
-		SelectVersion: func(UpdateVersionPrompt) (string, bool) {
-			return "1.27.0", true
-		},
+		SelectCandidates: selectAllAt("1.27.0"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -528,22 +786,28 @@ func TestUpdateImageStagesEditedManifest(t *testing.T) {
 	}
 }
 
-func TestGroupUpdateChoicesByFile(t *testing.T) {
-	choices := []UpdateChoice{
-		{Candidate: UpdateCandidate{Manager: ManagerNPM, Name: "zeta", File: "/repo/web/package.json", Scope: "dependencies"}},
-		{Candidate: UpdateCandidate{Manager: ManagerGo, Name: "github.com/acme/lib", File: "/repo/go.mod", Scope: "require"}},
-		{Candidate: UpdateCandidate{Manager: ManagerNPM, Name: "alpha", File: "/repo/web/package.json", Scope: "dependencies"}},
+// The tree groups rows under their manifest and sorts within it — nested
+// directories first, then files at that level — so selections come back in a
+// stable, readable order regardless of discovery order.
+func TestUpdateTreeGroupsAndSortsRowsByFile(t *testing.T) {
+	model := newUpdateChoiceTreeModel([]UpdateChoice{
+		{Candidate: UpdateCandidate{Manager: ManagerNPM, Name: "zeta", File: "repo/web/package.json", Scope: "dependencies"}},
+		{Candidate: UpdateCandidate{Manager: ManagerGo, Name: "github.com/acme/lib", File: "repo/go.mod", Scope: "require"}},
+		{Candidate: UpdateCandidate{Manager: ManagerNPM, Name: "alpha", File: "repo/web/package.json", Scope: "dependencies"}},
+	})
+	selectUpdateTreeStable(model.root)
+
+	var got []string
+	for _, selection := range model.selections() {
+		got = append(got, selection.Candidate.File+":"+selection.Candidate.Name)
 	}
-	groups := groupUpdateChoicesByFile(choices)
-	if len(groups) != 2 {
-		t.Fatalf("groups = %d, want 2: %#v", len(groups), groups)
+	want := []string{
+		"repo/web/package.json:alpha",
+		"repo/web/package.json:zeta",
+		"repo/go.mod:github.com/acme/lib",
 	}
-	if groups[0].File != "/repo/go.mod" || groups[1].File != "/repo/web/package.json" {
-		t.Fatalf("unexpected file order: %#v", groups)
-	}
-	webChoices := groups[1].Choices
-	if len(webChoices) != 2 || webChoices[0].Candidate.Name != "alpha" || webChoices[1].Candidate.Name != "zeta" {
-		t.Fatalf("web choices not sorted within file: %#v", webChoices)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("selection order:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
 
@@ -599,25 +863,38 @@ type updateFakeRunner struct {
 	// for callers that assert on which commands ran rather than what they
 	// printed. Left false, an unlisted command is an error.
 	succeedByDefault bool
+	// beforeRun and afterRun bracket the command body outside the runner's own
+	// lock, so tests can observe which commands overlap.
+	beforeRun func(Command)
+	afterRun  func(Command)
 }
 
 func (r *updateFakeRunner) Run(_ context.Context, cmd Command) (CommandResult, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.commands = append(r.commands, cmd)
 	key := strings.Join(append([]string{cmd.Name}, cmd.Args...), " ")
-	if r.errors != nil && r.errors[key] != nil {
-		return r.responses[key], r.errors[key]
-	}
+	result, hasResult := CommandResult{}, false
 	if r.responses != nil {
-		if result, ok := r.responses[key]; ok {
-			return result, nil
-		}
+		result, hasResult = r.responses[key]
 	}
-	if r.succeedByDefault {
-		return CommandResult{}, nil
+	var err error
+	switch {
+	case r.errors != nil && r.errors[key] != nil:
+		err = r.errors[key]
+	case hasResult, r.succeedByDefault:
+	default:
+		err = errors.New("unexpected command: " + key)
 	}
-	return CommandResult{}, errors.New("unexpected command: " + key)
+	before, after := r.beforeRun, r.afterRun
+	r.mu.Unlock()
+
+	if before != nil {
+		before(cmd)
+	}
+	if after != nil {
+		defer after(cmd)
+	}
+	return result, err
 }
 
 // ran returns each command as it would have been typed, in the order received.
@@ -659,6 +936,37 @@ func findUpdateCandidate(candidates []UpdateCandidate, manager Manager, name str
 		}
 	}
 	return nil
+}
+
+// selectAll answers the picker by taking every choice at the version pick
+// returns, standing in for the tree's per-row version mode.
+func selectAll(pick func(UpdateChoice) string) CandidateSelector {
+	return func(choices []UpdateChoice) ([]UpdateSelection, bool) {
+		out := make([]UpdateSelection, 0, len(choices))
+		for _, choice := range choices {
+			out = append(out, UpdateSelection{UpdateChoice: choice, Version: pick(choice)})
+		}
+		return out, true
+	}
+}
+
+// selectAllStable mirrors the tree's default: every row at its highest stable.
+func selectAllStable() CandidateSelector {
+	return selectAll(func(choice UpdateChoice) string { return choice.LatestStable })
+}
+
+// selectAllAt mirrors picking one explicit version for every row.
+func selectAllAt(version string) CandidateSelector {
+	return selectAll(func(UpdateChoice) string { return version })
+}
+
+// stubDefaultImageResolver swaps the factory Update uses when no ImageResolver
+// is supplied, so tests can count how many resolvers a single run builds.
+func stubDefaultImageResolver(t *testing.T, factory func() ImageVersionResolver) func() {
+	t.Helper()
+	previous := newDefaultImageResolver
+	newDefaultImageResolver = factory
+	return func() { newDefaultImageResolver = previous }
 }
 
 type fakeImageVersionResolver map[string][]string

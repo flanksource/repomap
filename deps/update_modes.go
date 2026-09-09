@@ -10,26 +10,38 @@ import (
 // updates pass the version straight to the manager, which validates it.
 func applyExplicitVersionUpdates(ctx context.Context, candidates []UpdateCandidate, opts UpdateOptions) []UpdatePlan {
 	plansByKey := make(map[string]UpdatePlan, len(candidates))
+	var requests []updateRequest
 	for _, candidate := range candidates {
-		plansByKey[candidate.key()] = applyExplicitVersion(ctx, candidate, opts)
+		if skipped, ok := explicitVersionSkip(ctx, candidate, opts); ok {
+			plansByKey[candidate.key()] = skipped
+			continue
+		}
+		requests = append(requests, updateRequest{Candidate: candidate, Version: opts.Version})
+	}
+	for key, plan := range applyUpdateRequests(ctx, requests, opts) {
+		plansByKey[key] = plan
 	}
 	return orderedUpdatePlans(candidates, plansByKey)
 }
 
-func applyExplicitVersion(ctx context.Context, candidate UpdateCandidate, opts UpdateOptions) UpdatePlan {
+// explicitVersionSkip reports the plan for a candidate --version cannot be
+// applied to. Image and Helm targets are validated against their published
+// versions here; package managers validate the version themselves.
+func explicitVersionSkip(ctx context.Context, candidate UpdateCandidate, opts UpdateOptions) (UpdatePlan, bool) {
 	if selectedVersionIsCurrent(candidate.Current, opts.Version) {
-		return skippedUpdatePlan(candidate, "already at selected version")
+		return skippedUpdatePlan(candidate, "already at selected version"), true
 	}
-	if candidate.Manager == ManagerImage || candidate.Manager == ManagerHelm {
-		available, _, _, err := availableImageTargetVersions(ctx, opts.ImageResolver, candidate)
-		if err != nil {
-			return skippedUpdatePlan(candidate, err.Error())
-		}
-		if !containsString(available, opts.Version) {
-			return skippedUpdatePlan(candidate, fmt.Sprintf("version %q is not available", opts.Version))
-		}
+	if candidate.Manager != ManagerImage && candidate.Manager != ManagerHelm {
+		return UpdatePlan{}, false
 	}
-	return applyDependencyUpdate(ctx, candidate, opts.Version, opts)
+	available, _, _, err := availableImageTargetVersions(ctx, opts.ImageResolver, candidate)
+	if err != nil {
+		return skippedUpdatePlan(candidate, err.Error()), true
+	}
+	if !containsString(available, opts.Version) {
+		return skippedUpdatePlan(candidate, fmt.Sprintf("version %q is not available", opts.Version)), true
+	}
+	return UpdatePlan{}, false
 }
 
 // applyLatestUpdates fills plansByKey with the highest-stable update for each
@@ -40,6 +52,7 @@ func applyLatestUpdates(ctx context.Context, candidates []UpdateCandidate, choic
 	for _, choice := range choices {
 		choiceByKey[choice.Candidate.key()] = choice
 	}
+	var requests []updateRequest
 	for _, candidate := range candidates {
 		key := candidate.key()
 		if _, done := plansByKey[key]; done {
@@ -54,7 +67,10 @@ func applyLatestUpdates(ctx context.Context, candidates []UpdateCandidate, choic
 			plansByKey[key] = skippedUpdatePlan(candidate, "no stable version available")
 			continue
 		}
-		plansByKey[key] = applyDependencyUpdate(ctx, candidate, choice.LatestStable, opts)
+		requests = append(requests, updateRequest{Candidate: candidate, Version: choice.LatestStable})
+	}
+	for key, plan := range applyUpdateRequests(ctx, requests, opts) {
+		plansByKey[key] = plan
 	}
 }
 

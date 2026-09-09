@@ -26,6 +26,15 @@ func updateTreeStyled(s, style string) string {
 	return clicky.Text(s, style).ANSI()
 }
 
+// updateVersionMode is how a row's target version is decided. Rows default to
+// the highest stable version; picking one explicitly is the only other case.
+type updateVersionMode int
+
+const (
+	updateVersionModeStable updateVersionMode = iota
+	updateVersionModeExplicit
+)
+
 type updateChoiceTreeNode struct {
 	Name      string
 	Path      string
@@ -34,9 +43,23 @@ type updateChoiceTreeNode struct {
 	FileGroup bool
 	Expanded  bool
 	Selected  bool
+	Mode      updateVersionMode
+	Picked    string
 	Children  []*updateChoiceTreeNode
 	Choice    *UpdateChoice
 	Parent    *updateChoiceTreeNode
+}
+
+// resolvedVersion is the version this row will be updated to, or "" when the
+// row has only pre-releases available and none has been picked.
+func (n *updateChoiceTreeNode) resolvedVersion() string {
+	if n.Choice == nil {
+		return ""
+	}
+	if n.Mode == updateVersionModeExplicit {
+		return n.Picked
+	}
+	return n.Choice.LatestStable
 }
 
 type updateChoiceTreeModel struct {
@@ -49,6 +72,10 @@ type updateChoiceTreeModel struct {
 	filterQuery string
 	cancelled   bool
 	submitted   bool
+	// pendingPick asks the caller to run the version picker for this row and
+	// resume; bubbletea owns the terminal while it runs, so the prompt cannot
+	// be opened from inside the model.
+	pendingPick *updateChoiceTreeNode
 }
 
 func newUpdateChoiceTreeModel(choices []UpdateChoice) updateChoiceTreeModel {
@@ -246,6 +273,7 @@ func updateTreeNodeMatchesFilter(n *updateChoiceTreeNode, query string) bool {
 			candidate.Scope,
 			candidate.File,
 			choice.LatestStable,
+			n.resolvedVersion(),
 			strings.Join(choice.Versions, " "),
 		}, " "))
 	}
@@ -309,6 +337,17 @@ func (m updateChoiceTreeModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "ctrl+a":
 		toggleUpdateTreeNode(m.root)
+	case "n", "s":
+		// Select the row (or every row under a directory) and target the
+		// highest stable version, discarding any explicit pick.
+		if n := m.currentNode(); n != nil {
+			selectUpdateTreeStable(n)
+		}
+	case "v":
+		if n := m.currentNode(); n != nil && !n.IsDir && n.Choice != nil {
+			m.pendingPick = n
+			return m, tea.Quit
+		}
 	}
 	return m, nil
 }
@@ -418,13 +457,27 @@ func setUpdateTreeLeavesSelected(n *updateChoiceTreeNode, selected bool) {
 	}
 }
 
-func (m updateChoiceTreeModel) selectedChoices() []UpdateChoice {
-	var out []UpdateChoice
+// selectUpdateTreeStable marks every leaf under n for update at its highest
+// stable version.
+func selectUpdateTreeStable(n *updateChoiceTreeNode) {
+	if !n.IsDir {
+		n.Selected = true
+		n.Mode = updateVersionModeStable
+		n.Picked = ""
+		return
+	}
+	for _, child := range n.Children {
+		selectUpdateTreeStable(child)
+	}
+}
+
+func (m updateChoiceTreeModel) selections() []UpdateSelection {
+	var out []UpdateSelection
 	var walk func(n *updateChoiceTreeNode)
 	walk = func(n *updateChoiceTreeNode) {
 		if !n.IsDir {
 			if n.Selected && n.Choice != nil {
-				out = append(out, *n.Choice)
+				out = append(out, UpdateSelection{UpdateChoice: *n.Choice, Version: n.resolvedVersion()})
 			}
 			return
 		}
@@ -438,7 +491,7 @@ func (m updateChoiceTreeModel) selectedChoices() []UpdateChoice {
 
 func (m updateChoiceTreeModel) View() string {
 	var b strings.Builder
-	selectedCount := len(m.selectedChoices())
+	selectedCount := len(m.selections())
 	totalLeaves := countUpdateTreeLeaves(m.root)
 	visibleLeaves := countVisibleUpdateTreeLeaves(m.visible)
 	filterActive := normalizedUpdateTreeFilter(m.filterQuery) != ""
@@ -458,7 +511,7 @@ func (m updateChoiceTreeModel) View() string {
 		))
 	} else {
 		b.WriteString(updateTreeStyled(
-			"  /=filter  space=toggle  a=toggle file  ctrl+a=all  enter=confirm  esc=cancel",
+			"  /=filter  space=toggle  a=toggle file  ctrl+a=all  n/s=stable  v=pick version  enter=confirm  esc=cancel",
 			updateTreeStyleHelp,
 		))
 	}
@@ -505,7 +558,7 @@ func renderUpdateTreeRow(n *updateChoiceTreeNode, isCursor bool, forceExpanded b
 	}
 	row := fmt.Sprintf("%s%s%s %s", cursor, indent, check, name)
 	if !n.IsDir && n.Choice != nil {
-		row += "  " + updateTreeChoiceChips(*n.Choice)
+		row += "  " + updateTreeChoiceChips(n)
 	}
 	return row
 }
@@ -527,16 +580,22 @@ func updateTreeCheckbox(n *updateChoiceTreeNode) string {
 	}
 }
 
-func updateTreeChoiceChips(choice UpdateChoice) string {
+func updateTreeChoiceChips(n *updateChoiceTreeNode) string {
+	choice := *n.Choice
 	candidate := choice.Candidate
 	parts := []string{
 		updateTreeStyled(string(candidate.Manager), managerStyle(candidate.Manager)),
 		updateTreeStyled("@"+candidate.Current, "font-mono text-muted"),
 	}
-	if choice.LatestStable != "" {
-		parts = append(parts, updateTreeStyled("latest "+choice.LatestStable, "text-green-600"))
+	switch version := n.resolvedVersion(); {
+	case version == "":
+		parts = append(parts, updateTreeStyled("no stable version - press v", "text-yellow-600"))
+	case n.Mode == updateVersionModeExplicit:
+		parts = append(parts, updateTreeStyled("→ "+version, "font-mono text-cyan-600 font-bold"))
+	default:
+		parts = append(parts, updateTreeStyled("→ "+version, "font-mono text-green-600"))
 	}
-	if choice.LatestPrerelease != "" {
+	if choice.LatestPrerelease != "" && choice.LatestPrerelease != n.resolvedVersion() {
 		parts = append(parts, updateTreeStyled("pre "+choice.LatestPrerelease, "text-yellow-600"))
 	}
 	if candidate.Scope != "" {
@@ -566,7 +625,11 @@ func countVisibleUpdateTreeLeaves(nodes []*updateChoiceTreeNode) int {
 	return total
 }
 
-func runUpdateChoiceTreePicker(choices []UpdateChoice) ([]UpdateChoice, bool) {
+// runUpdateChoiceTreePicker collects both which dependencies to update and the
+// version for each in one screen. Picking an explicit version (`v`) needs the
+// terminal bubbletea is holding, so the model quits, the prompt runs, and the
+// tree resumes over the same node pointers with its state intact.
+func runUpdateChoiceTreePicker(choices []UpdateChoice) ([]UpdateSelection, bool) {
 	if len(choices) == 0 {
 		return nil, false
 	}
@@ -581,22 +644,86 @@ func runUpdateChoiceTreePicker(choices []UpdateChoice) ([]UpdateChoice, bool) {
 	}
 	defer func() { _ = tty.Close() }()
 
+	for {
+		finished, ok := runUpdateChoiceTree(model, tty)
+		if !ok || finished.cancelled {
+			return nil, false
+		}
+		if node := finished.pendingPick; node != nil {
+			promptUpdateTreeVersion(finished.root, node)
+			model = finished
+			model.pendingPick = nil
+			model.submitted = false
+			model.rebuildVisible()
+			continue
+		}
+		if !finished.submitted {
+			return nil, false
+		}
+		return finished.selections(), true
+	}
+}
+
+// runUpdateChoiceTree renders one pass of the tree, holding the ANSI terminal
+// only for as long as the program runs so a follow-up prompt can claim it.
+func runUpdateChoiceTree(model updateChoiceTreeModel, tty *os.File) (updateChoiceTreeModel, bool) {
 	releaseTerminal, _ := task.AcquirePromptTerminal()
 	if releaseTerminal != nil {
 		defer releaseTerminal()
 	}
 
-	program := tea.NewProgram(model, tea.WithInput(tty), tea.WithOutput(tty), tea.WithAltScreen())
-	final, err := program.Run()
+	final, err := tea.NewProgram(model, tea.WithInput(tty), tea.WithOutput(tty), tea.WithAltScreen()).Run()
 	if err != nil {
-		if errors.Is(err, tea.ErrInterrupted) {
-			return nil, false
+		if !errors.Is(err, tea.ErrInterrupted) {
+			return updateChoiceTreeModel{}, false
 		}
-		return nil, false
+		return updateChoiceTreeModel{}, false
 	}
 	finished, ok := final.(updateChoiceTreeModel)
-	if !ok || finished.cancelled || !finished.submitted {
-		return nil, false
-	}
-	return finished.selectedChoices(), true
+	return finished, ok
 }
+
+// promptUpdateTreeVersion asks the version question node poses and records the
+// answer on every row posing the identical question — the same dependency at the
+// same current version is one decision however many manifests declare it.
+// Declining leaves those rows on whatever they were already targeting.
+func promptUpdateTreeVersion(root, node *updateChoiceTreeNode) {
+	group := updateTreeRowsSharingVersionQuestion(root, node)
+	choices := make([]UpdateChoice, 0, len(group))
+	for _, row := range group {
+		choices = append(choices, *row.Choice)
+	}
+	version, ok := selectUpdateVersion(newUpdateVersionPrompt(choices))
+	if !ok || strings.TrimSpace(version) == "" {
+		return
+	}
+	for _, row := range group {
+		row.Selected = true
+		row.Mode = updateVersionModeExplicit
+		row.Picked = strings.TrimSpace(version)
+	}
+}
+
+// updateTreeRowsSharingVersionQuestion returns every leaf posing node's version
+// question, in tree order so the prompt lists manifests deterministically.
+func updateTreeRowsSharingVersionQuestion(root, node *updateChoiceTreeNode) []*updateChoiceTreeNode {
+	want := node.Choice.versionPromptKey()
+	var out []*updateChoiceTreeNode
+	var walk func(n *updateChoiceTreeNode)
+	walk = func(n *updateChoiceTreeNode) {
+		if !n.IsDir {
+			if n.Choice != nil && n.Choice.versionPromptKey() == want {
+				out = append(out, n)
+			}
+			return
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+	return out
+}
+
+// selectUpdateVersion is a var so tree tests can answer the picker without a tty.
+var selectUpdateVersion = promptUpdateVersion

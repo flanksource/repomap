@@ -34,40 +34,34 @@ func applyDependencyUpdate(ctx context.Context, candidate UpdateCandidate, versi
 		return plan
 	}
 	plan.Written = true
-	stageUpdatePlan(ctx, &plan, candidate, runner)
 	return plan
 }
 
-func stageUpdatePlan(ctx context.Context, plan *UpdatePlan, candidate UpdateCandidate, runner CommandRunner) {
-	staged, err := stageUpdatedFiles(ctx, runner, candidate)
-	plan.Staged = staged
-	if err != nil {
-		plan.StageError = err.Error()
+func updateCommand(candidate UpdateCandidate, version string) (Command, error) {
+	return updateBatchCommand(candidate.Manager, candidate.Dir, candidate.Scope, []string{candidate.Name + "@" + version})
+}
+
+// updateBatchCommand builds the single command that updates every target in one
+// manifest. Package managers accept several name@version arguments per
+// invocation, and one run costs far less than one per dependency.
+func updateBatchCommand(manager Manager, dir, scope string, targets []string) (Command, error) {
+	switch manager {
+	case ManagerGo:
+		return Command{Dir: dir, Name: "go", Args: append([]string{"get"}, targets...)}, nil
+	case ManagerNPM:
+		return Command{Dir: dir, Name: "npm", Args: packageManagerArgs([]string{"install", "--package-lock-only", "--ignore-scripts"}, scope, targets)}, nil
+	case ManagerPNPM:
+		return Command{Dir: dir, Name: "pnpm", Args: packageManagerArgs([]string{"add", "--lockfile-only", "--ignore-scripts"}, scope, targets)}, nil
+	default:
+		return Command{}, fmt.Errorf("package-manager updates do not support manager %q", manager)
 	}
 }
 
-func updateCommand(candidate UpdateCandidate, version string) (Command, error) {
-	target := candidate.Name + "@" + version
-	switch candidate.Manager {
-	case ManagerGo:
-		return Command{Dir: candidate.Dir, Name: "go", Args: []string{"get", target}}, nil
-	case ManagerNPM:
-		args := []string{"install", "--package-lock-only", "--ignore-scripts"}
-		if flag := packageSaveFlag(candidate.Scope); flag != "" {
-			args = append(args, flag)
-		}
-		args = append(args, target)
-		return Command{Dir: candidate.Dir, Name: "npm", Args: args}, nil
-	case ManagerPNPM:
-		args := []string{"add", "--lockfile-only", "--ignore-scripts"}
-		if flag := packageSaveFlag(candidate.Scope); flag != "" {
-			args = append(args, flag)
-		}
-		args = append(args, target)
-		return Command{Dir: candidate.Dir, Name: "pnpm", Args: args}, nil
-	default:
-		return Command{}, fmt.Errorf("package-manager updates do not support manager %q", candidate.Manager)
+func packageManagerArgs(args []string, scope string, targets []string) []string {
+	if flag := packageSaveFlag(scope); flag != "" {
+		args = append(args, flag)
 	}
+	return append(args, targets...)
 }
 
 func packageSaveFlag(scope string) string {
