@@ -18,7 +18,7 @@ func resolveUpdateChoices(ctx context.Context, candidates []UpdateCandidate, opt
 	for _, candidate := range candidates {
 		raw := rawByKey[candidate.resolutionKey()]
 		if raw.err != nil {
-			plansByKey[candidate.key()] = skippedUpdatePlan(candidate, raw.err.Error())
+			plansByKey[candidate.key()] = failedUpdatePlan(candidate, raw.err.Error())
 			continue
 		}
 		// The "newer than current" filtering is per occurrence: duplicates of the
@@ -159,38 +159,24 @@ func AvailableDependencyVersions(ctx context.Context, runner CommandRunner, cand
 	if runner == nil {
 		runner = ExecRunner{}
 	}
-	var (
-		result CommandResult
-		err    error
-	)
+	cmd := Command{Dir: candidate.Dir}
 	switch candidate.Manager {
 	case ManagerGo:
-		result, err = runner.Run(ctx, Command{
-			Dir:  candidate.Dir,
-			Name: "go",
-			Args: []string{"list", "-m", "-versions", "-json", candidate.Name},
-			Env:  []string{"GOFLAGS=-mod=readonly"},
-		})
+		cmd.Name = "go"
+		cmd.Args = []string{"list", "-m", "-versions", "-json", candidate.Name}
+		cmd.Env = []string{"GOFLAGS=-mod=readonly"}
 	case ManagerNPM:
-		result, err = runner.Run(ctx, Command{
-			Dir:  candidate.Dir,
-			Name: "npm",
-			Args: []string{"view", candidate.Name, "versions", "--json"},
-		})
+		cmd.Name = "npm"
+		cmd.Args = []string{"view", candidate.Name, "versions", "--json"}
 	case ManagerPNPM:
-		result, err = runner.Run(ctx, Command{
-			Dir:  candidate.Dir,
-			Name: "pnpm",
-			Args: []string{"view", candidate.Name, "versions", "--json"},
-		})
+		cmd.Name = "pnpm"
+		cmd.Args = []string{"view", candidate.Name, "versions", "--json"}
 	default:
 		return nil, fmt.Errorf("dependency version lookup does not support manager %q", candidate.Manager)
 	}
+	result, err := runner.Run(ctx, cmd)
 	if err != nil {
-		if result.Stderr != "" {
-			return nil, fmt.Errorf("%s: %w", strings.TrimSpace(result.Stderr), err)
-		}
-		return nil, err
+		return nil, fmt.Errorf("%s", commandFailure(cmd, result, err))
 	}
 	versions, err := parseAvailableVersions(candidate.Manager, result.Stdout)
 	if err != nil {

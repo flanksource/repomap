@@ -161,13 +161,8 @@ func TestUpdateDryRunBuildsPackageManagerCommand(t *testing.T) {
 			"npm view left-pad versions --json": {Stdout: `["1.3.0","1.4.0"]`},
 		},
 	}
-	plans, err := Update(context.Background(), dir, UpdateOptions{
-		Managers: []Manager{ManagerNPM},
-		Filters:  []string{"left-pad"},
-		DryRun:   true,
-		Runner:   runner,
-		SelectCandidates: selectAllAt("1.4.0"),
-	})
+	plans, err := updateInTestRepo(context.Background(), dir, UpdateOptions{Managers: []Manager{ManagerNPM}, Filters: []string{"left-pad"}, DryRun: true, Runner: runner, SelectCandidates: selectAllAt("1.4.0")})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,16 +194,11 @@ func TestUpdateSkipsCandidatesWithoutChangesBeforePrompt(t *testing.T) {
 			"npm view left-pad versions --json": {Stdout: `["1.3.0"]`},
 		},
 	}
-	plans, err := Update(context.Background(), dir, UpdateOptions{
-		Managers: []Manager{ManagerNPM},
-		Filters:  []string{"left-pad"},
-		DryRun:   true,
-		Runner:   runner,
-		SelectCandidates: func([]UpdateChoice) ([]UpdateSelection, bool) {
-			t.Fatal("no-change candidates must not be shown for selection")
-			return nil, false
-		},
-	})
+	plans, err := updateInTestRepo(context.Background(), dir, UpdateOptions{Managers: []Manager{ManagerNPM}, Filters: []string{"left-pad"}, DryRun: true, Runner: runner, SelectCandidates: func([]UpdateChoice) ([]UpdateSelection, bool) {
+		t.Fatal("no-change candidates must not be shown for selection")
+		return nil, false
+	}})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,16 +219,11 @@ func TestUpdateCheckListsUpdatesWithoutPrompting(t *testing.T) {
 			"npm view left-pad versions --json": {Stdout: `["1.4.0","1.3.0"]`},
 		},
 	}
-	plans, err := Update(context.Background(), dir, UpdateOptions{
-		Managers: []Manager{ManagerNPM},
-		Filters:  []string{"left-pad"},
-		Check:    true,
-		Runner:   runner,
-		SelectCandidates: func([]UpdateChoice) ([]UpdateSelection, bool) {
-			t.Fatal("--check must not prompt for dependency selection")
-			return nil, false
-		},
-	})
+	plans, err := updateInTestRepo(context.Background(), dir, UpdateOptions{Managers: []Manager{ManagerNPM}, Filters: []string{"left-pad"}, Check: true, Runner: runner, SelectCandidates: func([]UpdateChoice) ([]UpdateSelection, bool) {
+		t.Fatal("--check must not prompt for dependency selection")
+		return nil, false
+	}})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,19 +284,16 @@ func TestUpdateHelmReleaseWithMissingSourceReportsClearError(t *testing.T) {
 	runGit(t, dir, "add", ".")
 
 	resolver := &recordingImageVersionResolver{}
-	plans, err := Update(context.Background(), ".", UpdateOptions{
-		Managers:      []Manager{ManagerHelm},
-		Check:         true,
-		ImageResolver: resolver,
-	})
-	if err != nil {
-		t.Fatalf("Update returned fatal error, want graceful per-chart skip: %v", err)
+	plans, err := updateInTestRepo(context.Background(), ".", UpdateOptions{Managers: []Manager{ManagerHelm}, Check: true, ImageResolver: resolver})
+
+	if err == nil {
+		t.Fatal("expected a missing-source failure")
 	}
 	if len(plans) != 1 {
 		t.Fatalf("plans = %#v, want 1", plans)
 	}
-	if !strings.Contains(plans[0].Skipped, "HelmRepository flux-system/mission-control-oipa which was not found in the scanned manifests") {
-		t.Fatalf("skipped reason = %q, want the actionable HelmRepository-not-found error", plans[0].Skipped)
+	if !strings.Contains(plans[0].Error, "HelmRepository flux-system/mission-control-oipa which was not found in the scanned manifests") {
+		t.Fatalf("failure = %q, want the actionable HelmRepository-not-found error", plans[0].Error)
 	}
 	if resolver.calls.Load() != 0 {
 		t.Fatalf("resolver was queried %d times; an unresolved chart source must short-circuit before any lookup", resolver.calls.Load())
@@ -344,18 +326,13 @@ func TestUpdateImageDryRunUsesImageVersionResolver(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "apps", "workloads.yaml"), deploymentUpdateFixture)
 	runGit(t, dir, "add", ".")
 
-	plans, err := Update(context.Background(), ".", UpdateOptions{
-		Managers:      []Manager{ManagerImage},
-		Filters:       []string{"*nginx*"},
-		DryRun:        true,
-		ImageResolver: fakeImageVersionResolver{"nginx": []string{"1.27.0", "1.25.3"}},
-		SelectCandidates: func(choices []UpdateChoice) ([]UpdateSelection, bool) {
-			if len(choices) != 1 {
-				t.Fatalf("choices = %#v, want exactly nginx", choices)
-			}
-			return selectAllAt("1.27.0")(choices)
-		},
-	})
+	plans, err := updateInTestRepo(context.Background(), ".", UpdateOptions{Managers: []Manager{ManagerImage}, Filters: []string{"*nginx*"}, DryRun: true, ImageResolver: fakeImageVersionResolver{"nginx": []string{"1.27.0", "1.25.3"}}, SelectCandidates: func(choices []UpdateChoice) ([]UpdateSelection, bool) {
+		if len(choices) != 1 {
+			t.Fatalf("choices = %#v, want exactly nginx", choices)
+		}
+		return selectAllAt("1.27.0")(choices)
+	}})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,15 +360,16 @@ func TestUpdateStagesChangedFilesAfterWrite(t *testing.T) {
 		responses: map[string]CommandResult{
 			"npm view left-pad versions --json":                                           {Stdout: `["1.4.0","1.3.0"]`},
 			"npm install --package-lock-only --ignore-scripts --save-prod left-pad@1.4.0": {},
-			"git add -- package-lock.json package.json":                                   {},
+		},
+		beforeRun: func(cmd Command) {
+			if cmd.Name == "npm" && cmd.Args[0] == "install" {
+				writeFile(t, filepath.Join(dir, "package.json"), `{"name":"web","dependencies":{"left-pad":"^1.4.0"}}`)
+				writeFile(t, filepath.Join(dir, "package-lock.json"), `{"lockfileVersion":3,"version":"1.4.0"}`)
+			}
 		},
 	}
-	plans, err := Update(context.Background(), dir, UpdateOptions{
-		Managers: []Manager{ManagerNPM},
-		Filters:  []string{"left-pad"},
-		Runner:   runner,
-		SelectCandidates: selectAllAt("1.4.0"),
-	})
+	plans, err := updateInTestRepo(context.Background(), dir, UpdateOptions{Managers: []Manager{ManagerNPM}, Filters: []string{"left-pad"}, Runner: runner, SelectCandidates: selectAllAt("1.4.0")})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,20 +382,9 @@ func TestUpdateStagesChangedFilesAfterWrite(t *testing.T) {
 	if plans[0].StageError != "" {
 		t.Fatalf("unexpected stage error: %q", plans[0].StageError)
 	}
-	var gitAdd *Command
-	for i := range runner.commands {
-		if runner.commands[i].Name == "git" {
-			gitAdd = &runner.commands[i]
-		}
-	}
-	if gitAdd == nil {
-		t.Fatalf("expected a git add command, got %#v", runner.commands)
-	}
-	if gitAdd.Dir != dir {
-		t.Fatalf("git add dir = %q, want %q", gitAdd.Dir, dir)
-	}
-	if strings.Join(gitAdd.Args, " ") != "add -- package-lock.json package.json" {
-		t.Fatalf("git add args = %q", strings.Join(gitAdd.Args, " "))
+	staged, err := (ExecRunner{}).Run(context.Background(), Command{Dir: dir, Name: "git", Args: []string{"show", ":package.json"}})
+	if err != nil || !strings.Contains(staged.Stdout, "1.4.0") {
+		t.Fatalf("staged manifest = %q, error %v", staged.Stdout, err)
 	}
 }
 
@@ -439,32 +406,20 @@ func TestUpdateStagesOncePerFileSet(t *testing.T) {
 			"npm view mid-pad versions --json":   {Stdout: `["3.1.0","3.0.0"]`},
 		},
 	}
-	plans, err := Update(context.Background(), dir, UpdateOptions{
-		Managers: []Manager{ManagerNPM},
-		Runner:   runner,
-		SelectCandidates: selectAll(func(choice UpdateChoice) string { return choice.Versions[0] }),
-	})
+	plans, err := updateInTestRepo(context.Background(), dir, UpdateOptions{Managers: []Manager{ManagerNPM}, Runner: runner, SelectCandidates: selectAll(func(choice UpdateChoice) string { return choice.Versions[0] })})
+
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(plans) != 3 {
 		t.Fatalf("plans = %d, want one per dependency: %#v", len(plans), plans)
 	}
-	gitAdds := 0
-	for _, cmd := range runner.commands {
-		if cmd.Name == "git" {
-			gitAdds++
-		}
-	}
-	if gitAdds != 1 {
-		t.Fatalf("git add invocations = %d, want 1 for three deps in one manifest", gitAdds)
-	}
 	for _, plan := range plans {
 		if !plan.Written {
 			t.Fatalf("plan = %#v, want written", plan)
 		}
-		if strings.Join(plan.Staged, ",") != "package-lock.json,package.json" {
-			t.Fatalf("staged = %#v, want every plan to carry the shared file set", plan.Staged)
+		if len(plan.Staged) != 0 {
+			t.Fatalf("staged = %#v, a package manager that changed no bytes must stage nothing", plan.Staged)
 		}
 	}
 }
@@ -488,11 +443,8 @@ require (
 			"go list -m -versions -json github.com/acme/tool": {Stdout: `{"Versions":["v1.5.0","v1.6.0"]}`},
 		},
 	}
-	plans, err := Update(context.Background(), dir, UpdateOptions{
-		Managers: []Manager{ManagerGo},
-		Runner:   runner,
-		SelectCandidates: selectAll(func(choice UpdateChoice) string { return choice.Versions[0] }),
-	})
+	plans, err := updateInTestRepo(context.Background(), dir, UpdateOptions{Managers: []Manager{ManagerGo}, Runner: runner, SelectCandidates: selectAll(func(choice UpdateChoice) string { return choice.Versions[0] })})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,11 +486,7 @@ func TestUpdateSeparatesBatchesByScope(t *testing.T) {
 			"npm view right-pad versions --json": {Stdout: `["2.1.0","2.0.0"]`},
 		},
 	}
-	if _, err := Update(context.Background(), dir, UpdateOptions{
-		Managers: []Manager{ManagerNPM},
-		Runner:   runner,
-		SelectCandidates: selectAll(func(choice UpdateChoice) string { return choice.Versions[0] }),
-	}); err != nil {
+	if _, err := updateInTestRepo(context.Background(), dir, UpdateOptions{Managers: []Manager{ManagerNPM}, Runner: runner, SelectCandidates: selectAll(func(choice UpdateChoice) string { return choice.Versions[0] })}); err != nil {
 		t.Fatal(err)
 	}
 	var installs []string
@@ -558,7 +506,7 @@ func TestUpdateSeparatesBatchesByScope(t *testing.T) {
 }
 
 // A failed batch cannot say which dependency broke, so it retries individually.
-func TestUpdateBatchFailureFallsBackPerDependency(t *testing.T) {
+func TestUpdateBatchFailureDoesNotRetryMutatingCommands(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "go.mod"), `module example.com/app
 
@@ -580,23 +528,24 @@ require (
 			"go get github.com/acme/tool@v1.6.0":                            errors.New("module tool is broken"),
 		},
 	}
-	plans, err := Update(context.Background(), dir, UpdateOptions{
-		Managers: []Manager{ManagerGo},
-		Runner:   runner,
-		SelectCandidates: selectAll(func(choice UpdateChoice) string { return choice.Versions[0] }),
-	})
-	if err != nil {
-		t.Fatal(err)
+	plans, err := updateInTestRepo(context.Background(), dir, UpdateOptions{Managers: []Manager{ManagerGo}, Runner: runner, SelectCandidates: selectAll(func(choice UpdateChoice) string { return choice.Versions[0] })})
+
+	if err == nil {
+		t.Fatal("expected a batch failure")
 	}
-	byName := map[string]UpdatePlan{}
 	for _, plan := range plans {
-		byName[plan.Name] = plan
+		if plan.Written || !strings.Contains(plan.Error, "batch failed") || len(plan.Staged) != 0 {
+			t.Fatalf("plan = %#v, want an unstaged batch failure", plan)
+		}
 	}
-	if got := byName["github.com/acme/lib"]; !got.Written || got.Skipped != "" {
-		t.Fatalf("healthy dependency = %#v, want written despite its sibling failing", got)
+	var writes int
+	for _, cmd := range runner.commands {
+		if cmd.Name == "go" && cmd.Args[0] == "get" {
+			writes++
+		}
 	}
-	if got := byName["github.com/acme/tool"]; got.Written || got.Skipped != "module tool is broken" {
-		t.Fatalf("broken dependency = %#v, want its own error", got)
+	if writes != 1 {
+		t.Fatalf("mutating commands = %d, want one without retries", writes)
 	}
 }
 
@@ -633,11 +582,7 @@ func TestUpdateSerializesPerDirectoryAndParallelizesAcrossDirectories(t *testing
 		},
 	}
 
-	if _, err := Update(context.Background(), dir, UpdateOptions{
-		Managers: []Manager{ManagerNPM},
-		Runner:   runner,
-		SelectCandidates: selectAll(func(choice UpdateChoice) string { return choice.Versions[0] }),
-	}); err != nil {
+	if _, err := updateInTestRepo(context.Background(), dir, UpdateOptions{Managers: []Manager{ManagerNPM}, Runner: runner, SelectCandidates: selectAll(func(choice UpdateChoice) string { return choice.Versions[0] })}); err != nil {
 		t.Fatal(err)
 	}
 	if got := tracker.maxConcurrentDirs(); got < 2 {
@@ -716,13 +661,8 @@ func TestUpdateDryRunDoesNotStage(t *testing.T) {
 			"npm view left-pad versions --json": {Stdout: `["1.4.0","1.3.0"]`},
 		},
 	}
-	plans, err := Update(context.Background(), dir, UpdateOptions{
-		Managers: []Manager{ManagerNPM},
-		Filters:  []string{"left-pad"},
-		DryRun:   true,
-		Runner:   runner,
-		SelectCandidates: selectAllAt("1.4.0"),
-	})
+	plans, err := updateInTestRepo(context.Background(), dir, UpdateOptions{Managers: []Manager{ManagerNPM}, Filters: []string{"left-pad"}, DryRun: true, Runner: runner, SelectCandidates: selectAllAt("1.4.0")})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -762,12 +702,8 @@ func TestUpdateImageStagesEditedManifest(t *testing.T) {
 	runGit(t, dir, "add", ".")
 	runGit(t, dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init")
 
-	plans, err := Update(context.Background(), ".", UpdateOptions{
-		Managers:      []Manager{ManagerImage},
-		Filters:       []string{"*nginx*"},
-		ImageResolver: fakeImageVersionResolver{"nginx": []string{"1.27.0", "1.25.3"}},
-		SelectCandidates: selectAllAt("1.27.0"),
-	})
+	plans, err := updateInTestRepo(context.Background(), ".", UpdateOptions{Managers: []Manager{ManagerImage}, Filters: []string{"*nginx*"}, ImageResolver: fakeImageVersionResolver{"nginx": []string{"1.27.0", "1.25.3"}}, SelectCandidates: selectAllAt("1.27.0")})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -845,10 +781,8 @@ func TestUpdateCommandForManagers(t *testing.T) {
 }
 
 func TestUpdateRejectsUnsupportedManagers(t *testing.T) {
-	_, err := Update(context.Background(), t.TempDir(), UpdateOptions{
-		Managers: []Manager{ManagerMaven},
-		Filters:  []string{"*"},
-	})
+	_, err := updateInTestRepo(context.Background(), t.TempDir(), UpdateOptions{Managers: []Manager{ManagerMaven}, Filters: []string{"*"}})
+
 	if err == nil || !strings.Contains(err.Error(), "unsupported manager") {
 		t.Fatalf("expected unsupported manager error, got %v", err)
 	}

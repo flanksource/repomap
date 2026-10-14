@@ -128,8 +128,10 @@ occurrence. Occurrences sitting at different current versions stay separate.
 Use -y (or --latest/--stable) to skip the tree and take the highest stable
 version for everything, or --version to apply a concrete version. Confirmed
 updates are applied together, batching the dependencies of a manifest into one
-package-manager run, then staged with git add (manifests plus lockfiles);
---dry-run and --check never stage.
+package-manager run, then only the updater's changes are staged, preserving
+existing staged and unstaged work. pnpm catalogs retain their references and
+share the workspace lockfile. --dry-run and --check never write or stage.
+Update and staging failures return nonzero; written files remain for review.
 
 Use --check to list updateable dependencies without prompting or writing.
 
@@ -207,10 +209,10 @@ func runDepsUpdate(ctx context.Context, opts DepsUpdateOptions) (any, error) {
 		Chart:     opts.Chart,
 		// --stable and -y both mean "highest stable, no prompting", which is
 		// exactly what --latest already does.
-		Latest:    opts.Latest || opts.Stable || opts.Yes,
-		Version:   opts.Version,
-		Check:     opts.Check,
-		DryRun:    opts.DryRun,
+		Latest:  opts.Latest || opts.Stable || opts.Yes,
+		Version: opts.Version,
+		Check:   opts.Check,
+		DryRun:  opts.DryRun,
 	})
 	if err != nil {
 		return nil, err

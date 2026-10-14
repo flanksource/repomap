@@ -96,6 +96,29 @@ lockfile content without running package-manager commands. It prints direct
 dependencies by default; use `--depth 0` for the full graph available from the
 local files.
 
+### `deps update`
+
+Preview or apply direct dependency updates across package manifests:
+
+```bash
+# Resolve available updates without changing files or the Git index
+repomap deps update '@flanksource/clicky-ui' ../gavel --check
+
+# Preview the highest stable version and its package-manager commands
+repomap deps update '@flanksource/clicky-ui' ../gavel --latest --dry-run --json
+
+# Apply a selected dependency version
+repomap deps update '@example/ui' ./web --version 2.0.0
+```
+
+pnpm workspace members share their owning workspace lockfile. Default and named catalog references are resolved before comparing versions, and catalog updates preserve the references in package manifests. Previews identify the catalog file and affected consumers. Selecting a catalog update affects every consumer of that entry, including consumers outside a file filter. Selecting different versions for the same catalog entry fails before writing.
+
+Updates run package managers in lockfile-only mode with lifecycle scripts disabled. They do not install `node_modules`, build bundles, or run application tests. Root-package updates use pnpm's workspace-root flag, and overlapping workspaces update serially before their lockfiles are refreshed.
+
+Applied updates automatically stage only the updater's changes, including changed catalog and lockfiles. Existing staged and unstaged edits remain separate, including edits in the same tracked file. Applying updates requires a Git repository; unmerged targets and pre-existing untracked target files are rejected before writing. Newly generated lockfiles can be staged normally. Temporary staging artifacts live under `.tmp/`.
+
+Lookup, update, lockfile, and staging failures return a nonzero exit status with per-dependency results and command diagnostics. Failed mutating commands are not retried. If an update fails, its repository is not staged; inspect the reported changed files before rerunning. If staging conflicts with existing edits or the index changes concurrently, the real index is preserved and written files remain available for review with `git diff` and `git diff --cached`. Resolve conflicts and select any remaining hunks deliberately with `git add -p -- <path>`. Repomap does not commit, push, reset, or stash changes.
+
 ### `cache-warm`
 
 Prime the local package caches for dependencies this machine has not checked out.

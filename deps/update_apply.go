@@ -1,41 +1,10 @@
 package deps
 
 import (
-	"context"
 	"fmt"
-)
 
-func applyDependencyUpdate(ctx context.Context, candidate UpdateCandidate, version string, opts UpdateOptions) UpdatePlan {
-	if candidate.Manager == ManagerImage || candidate.Manager == ManagerHelm {
-		return applyImageTargetUpdate(ctx, candidate, version, opts)
-	}
-	plan := planFromCandidate(candidate)
-	plan.NewVersion = version
-	if selectedVersionIsCurrent(candidate.Current, version) {
-		plan.Skipped = "already at selected version"
-		return plan
-	}
-	cmd, err := updateCommand(candidate, version)
-	if err != nil {
-		plan.Skipped = err.Error()
-		return plan
-	}
-	plan.Command = append([]string{cmd.Name}, cmd.Args...)
-	if opts.DryRun {
-		plan.DryRun = true
-		return plan
-	}
-	runner := opts.Runner
-	if runner == nil {
-		runner = ExecRunner{}
-	}
-	if _, err := runner.Run(ctx, cmd); err != nil {
-		plan.Skipped = err.Error()
-		return plan
-	}
-	plan.Written = true
-	return plan
-}
+	"github.com/flanksource/repomap/deps/internal/pnpm"
+)
 
 func updateCommand(candidate UpdateCandidate, version string) (Command, error) {
 	return updateBatchCommand(candidate.Manager, candidate.Dir, candidate.Scope, []string{candidate.Name + "@" + version})
@@ -51,7 +20,15 @@ func updateBatchCommand(manager Manager, dir, scope string, targets []string) (C
 	case ManagerNPM:
 		return Command{Dir: dir, Name: "npm", Args: packageManagerArgs([]string{"install", "--package-lock-only", "--ignore-scripts"}, scope, targets)}, nil
 	case ManagerPNPM:
-		return Command{Dir: dir, Name: "pnpm", Args: packageManagerArgs([]string{"add", "--lockfile-only", "--ignore-scripts"}, scope, targets)}, nil
+		workspace, err := pnpm.Find(dir)
+		if err != nil {
+			return Command{}, err
+		}
+		args := []string{"add", "--lockfile-only", "--ignore-scripts"}
+		if workspace != nil && workspace.Root == dir {
+			args = append(args, "--workspace-root")
+		}
+		return Command{Dir: dir, Name: "pnpm", Args: packageManagerArgs(args, scope, targets)}, nil
 	default:
 		return Command{}, fmt.Errorf("package-manager updates do not support manager %q", manager)
 	}

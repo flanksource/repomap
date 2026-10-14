@@ -2,12 +2,14 @@ package deps
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/flanksource/clicky/task"
 	flanksourceContext "github.com/flanksource/commons/context"
+	"github.com/flanksource/repomap/deps/internal/pnpm"
 )
 
 // updateRequest pairs a candidate with the version the caller settled on, so
@@ -22,21 +24,39 @@ type updateRequest struct {
 // updates written to the same manifest under the same dependency section.
 // Image and Helm requests are never batched — each rewrites its own manifest.
 type updateBatch struct {
-	Manager Manager
-	Dir     string
-	File    string
-	Scope   string
-	Indexes []int
+	Manager   Manager
+	Dir       string
+	File      string
+	Scope     string
+	Indexes   []int
+	workspace *pnpm.Workspace
 }
 
 // applyUpdateRequests applies every request and returns the resulting plans
-// keyed by UpdateCandidate.key. Applying and staging are separate phases:
-// `git add` takes .git/index.lock exclusively, so staging runs once per
-// distinct file set after every update has been written.
+// keyed by UpdateCandidate.key. Repository snapshots isolate updater changes
+// from existing staged and unstaged work.
 func applyUpdateRequests(ctx context.Context, requests []updateRequest, opts UpdateOptions) map[string]UpdatePlan {
 	plans := make([]UpdatePlan, len(requests))
-	runUpdateLanes(ctx, groupUpdateBatchesIntoLanes(groupUpdateRequestsIntoBatches(requests)), requests, plans, opts)
-	stageUpdatePlans(ctx, requests, plans, opts.Runner)
+	for i, request := range requests {
+		plans[i] = planFromCandidate(request.Candidate)
+		plans[i].NewVersion = request.Version
+	}
+	if err := validateCatalogSelections(requests); err != nil {
+		for i := range plans {
+			plans[i].Error = err.Error()
+		}
+	} else {
+		stages, err := beginUpdateStages(ctx, requests, opts)
+		if err != nil {
+			for i := range plans {
+				plans[i].Error = err.Error()
+			}
+		} else {
+			runUpdateLanes(ctx, groupUpdateBatchesIntoLanes(groupUpdateRequestsIntoBatches(requests)), requests, plans, opts)
+			refreshUpdateWorkspaces(ctx, requests, plans, opts)
+			finishUpdateStages(ctx, plans, stages)
+		}
+	}
 
 	plansByKey := make(map[string]UpdatePlan, len(requests))
 	for i, request := range requests {
@@ -61,11 +81,12 @@ func groupUpdateRequestsIntoBatches(requests []updateRequest) []updateBatch {
 		}
 		indexByKey[key] = len(batches)
 		batches = append(batches, updateBatch{
-			Manager: candidate.Manager,
-			Dir:     candidate.Dir,
-			File:    candidate.File,
-			Scope:   candidate.Scope,
-			Indexes: []int{i},
+			Manager:   candidate.Manager,
+			Dir:       candidate.Dir,
+			File:      candidate.File,
+			Scope:     candidate.Scope,
+			Indexes:   []int{i},
+			workspace: candidate.workspace,
 		})
 	}
 	return batches
@@ -84,23 +105,47 @@ type updateLane struct {
 // edits are whole-file rewrites, so each manifest is its own lane, which still
 // lets separate manifests resolve digests in parallel.
 func groupUpdateBatchesIntoLanes(batches []updateBatch) []updateLane {
-	indexByKey := map[string]int{}
-	var lanes []updateLane
-	for _, batch := range batches {
-		key := batch.laneKey()
-		if i, ok := indexByKey[key]; ok {
-			lanes[i].Batches = append(lanes[i].Batches, batch)
-			continue
+	parents := make([]int, len(batches))
+	for i := range parents {
+		parents[i] = i
+	}
+	root := func(i int) int {
+		for parents[i] != i {
+			i = parents[i]
 		}
-		indexByKey[key] = len(lanes)
-		lanes = append(lanes, updateLane{Name: key, Batches: []updateBatch{batch}})
+		return i
+	}
+	for i, batch := range batches {
+		for j := 0; j < i; j++ {
+			if batch.overlaps(batches[j]) {
+				parents[root(i)] = root(j)
+			}
+		}
+	}
+	indexByRoot := map[int]int{}
+	var lanes []updateLane
+	for i, batch := range batches {
+		key := root(i)
+		if j, ok := indexByRoot[key]; ok {
+			lanes[j].Batches = append(lanes[j].Batches, batch)
+		} else {
+			indexByRoot[key] = len(lanes)
+			lanes = append(lanes, updateLane{Name: batch.laneKey(), Batches: []updateBatch{batch}})
+		}
 	}
 	return lanes
+}
+
+func (b updateBatch) overlaps(other updateBatch) bool {
+	return b.laneKey() == other.laneKey() || b.workspace != nil && b.workspace.Contains(other.Dir) || other.workspace != nil && other.workspace.Contains(b.Dir)
 }
 
 func (b updateBatch) laneKey() string {
 	if b.Manager == ManagerImage || b.Manager == ManagerHelm {
 		return "file:" + filepath.Join(b.Dir, b.File)
+	}
+	if b.workspace != nil {
+		return "pnpm:" + b.workspace.Root
 	}
 	return "pkg:" + b.Dir
 }
@@ -113,6 +158,10 @@ func runUpdateLanes(ctx context.Context, lanes []updateLane, requests []updateRe
 	}
 	if len(lanes) == 1 {
 		for _, batch := range lanes[0].Batches {
+			if updateLaneFailed(lanes[0].Batches, plans) {
+				markBlockedBatch(batch, plans)
+				continue
+			}
 			applyUpdateBatch(ctx, batch, requests, plans, opts)
 		}
 		return
@@ -122,8 +171,16 @@ func runUpdateLanes(ctx context.Context, lanes []updateLane, requests []updateRe
 		idx, batches := i, lane.Batches
 		group.Add(updateLaneTaskName(batches), func(_ flanksourceContext.Context, tk *task.Task) (int, error) {
 			for _, batch := range batches {
+				if updateLaneFailed(batches, plans) {
+					markBlockedBatch(batch, plans)
+					continue
+				}
 				tk.Infof("updating %d %s %s", len(batch.Indexes), batch.Manager, pluralizeDependency(len(batch.Indexes)))
 				applyUpdateBatch(ctx, batch, requests, plans, opts)
+			}
+			if updateLaneFailed(batches, plans) {
+				tk.Failed()
+				return idx, fmt.Errorf("updates failed in %s", updateLaneTaskName(batches))
 			}
 			tk.Success()
 			return idx, nil
@@ -154,19 +211,20 @@ func pluralizeDependency(n int) string {
 
 func updateBatchKey(request updateRequest) string {
 	candidate := request.Candidate
+	if candidate.catalog != nil {
+		return "catalog:" + candidate.catalog.Key()
+	}
 	if candidate.Manager == ManagerImage || candidate.Manager == ManagerHelm {
 		return "single\x00" + candidate.key()
 	}
 	return strings.Join([]string{string(candidate.Manager), candidate.Dir, candidate.Scope}, "\x00")
 }
 
-// applyUpdateBatch writes every plan the batch covers. A batch that fails as a
-// whole is retried one dependency at a time so a single bad version reports its
-// own error instead of failing its manifest siblings.
+// applyUpdateBatch records a failed mutating command without retrying it.
 func applyUpdateBatch(ctx context.Context, batch updateBatch, requests []updateRequest, plans []UpdatePlan, opts UpdateOptions) {
 	if batch.Manager == ManagerImage || batch.Manager == ManagerHelm {
 		for _, i := range batch.Indexes {
-			plans[i] = applyDependencyUpdate(ctx, requests[i].Candidate, requests[i].Version, opts)
+			plans[i] = applyImageTargetUpdate(ctx, requests[i].Candidate, requests[i].Version, opts)
 		}
 		return
 	}
@@ -186,6 +244,22 @@ func applyUpdateBatch(ctx context.Context, batch updateBatch, requests []updateR
 	if len(runnable) == 0 {
 		return
 	}
+	if ref := requests[runnable[0]].Candidate.catalog; ref != nil {
+		for _, i := range runnable {
+			plans[i].Command = []string{"pnpm", "install", "--lockfile-only", "--ignore-scripts", "--no-frozen-lockfile"}
+		}
+		err := ref.Apply(requests[runnable[0]].Version, opts.DryRun)
+		for _, i := range runnable {
+			if err != nil {
+				plans[i].Error = err.Error()
+			} else if opts.DryRun {
+				plans[i].DryRun = true
+			} else {
+				plans[i].Written = true
+			}
+		}
+		return
+	}
 
 	sort.SliceStable(runnable, func(a, b int) bool {
 		return requests[runnable[a]].Candidate.less(requests[runnable[b]].Candidate)
@@ -198,7 +272,7 @@ func applyUpdateBatch(ctx context.Context, batch updateBatch, requests []updateR
 	cmd, err := updateBatchCommand(batch.Manager, batch.Dir, batch.Scope, targets)
 	if err != nil {
 		for _, i := range runnable {
-			plans[i].Skipped = err.Error()
+			plans[i].Error = err.Error()
 		}
 		return
 	}
@@ -216,56 +290,14 @@ func applyUpdateBatch(ctx context.Context, batch updateBatch, requests []updateR
 	if runner == nil {
 		runner = ExecRunner{}
 	}
-	_, err = runner.Run(ctx, cmd)
+	result, err := runner.Run(ctx, cmd)
 	if err == nil {
 		for _, i := range runnable {
 			plans[i].Written = true
 		}
 		return
 	}
-	if len(runnable) == 1 {
-		// A one-target batch is already the per-dependency command, so its error
-		// needs no attribution.
-		plans[runnable[0]].Skipped = err.Error()
-		return
-	}
-	// One shared error cannot say which dependency failed, so retry them
-	// individually to keep the per-dependency reporting the serial path had.
 	for _, i := range runnable {
-		plans[i] = applyDependencyUpdate(ctx, requests[i].Candidate, requests[i].Version, opts)
+		plans[i].Error = commandFailure(cmd, result, err)
 	}
-}
-
-// stageUpdatePlans runs `git add` once per distinct set of written files and
-// copies the outcome onto every plan that shares it. Candidates in one manifest
-// rewrite the same files, so staging them individually would run identical
-// commands and contend on the git index lock.
-func stageUpdatePlans(ctx context.Context, requests []updateRequest, plans []UpdatePlan, runner CommandRunner) {
-	type stageResult struct {
-		staged []string
-		err    string
-	}
-	results := map[string]stageResult{}
-	for i, request := range requests {
-		if !plans[i].Written {
-			continue
-		}
-		key := stageGroupKey(request.Candidate)
-		if _, done := results[key]; !done {
-			staged, err := stageUpdatedFiles(ctx, runner, request.Candidate)
-			result := stageResult{staged: staged}
-			if err != nil {
-				result.err = err.Error()
-			}
-			results[key] = result
-		}
-		plans[i].Staged = results[key].staged
-		plans[i].StageError = results[key].err
-	}
-}
-
-// stageGroupKey identifies candidates whose successful update stages exactly
-// the same paths.
-func stageGroupKey(candidate UpdateCandidate) string {
-	return candidate.Dir + "\x00" + strings.Join(updatedRepoFiles(candidate), "\x00")
 }

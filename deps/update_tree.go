@@ -587,6 +587,9 @@ func updateTreeChoiceChips(n *updateChoiceTreeNode) string {
 		updateTreeStyled(string(candidate.Manager), managerStyle(candidate.Manager)),
 		updateTreeStyled("@"+candidate.Current, "font-mono text-muted"),
 	}
+	if candidate.catalog != nil {
+		parts = append(parts, updateTreeStyled("catalog: "+cwdRelativePath(candidate.catalog.Workspace.File), "text-muted"))
+	}
 	switch version := n.resolvedVersion(); {
 	case version == "":
 		parts = append(parts, updateTreeStyled("no stable version - press v", "text-yellow-600"))

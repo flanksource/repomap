@@ -2,41 +2,83 @@ package deps
 
 import (
 	"context"
-	"os"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
+
+	"github.com/flanksource/repomap/deps/internal/gitstage"
 )
 
-// stageUpdatedFiles runs `git add` for the manifest and lockfiles a successful
-// dependency update touches, returning the cwd-relative paths that were staged.
-func stageUpdatedFiles(ctx context.Context, runner CommandRunner, candidate UpdateCandidate) ([]string, error) {
-	if runner == nil {
-		runner = ExecRunner{}
-	}
-	relPaths := updatedRepoFiles(candidate)
-	existing := make([]string, 0, len(relPaths))
-	for _, rel := range relPaths {
-		abs := filepath.Join(candidate.Dir, filepath.FromSlash(rel))
-		if info, err := os.Stat(abs); err == nil && !info.IsDir() {
-			existing = append(existing, rel)
-		}
-	}
-	if len(existing) == 0 {
+type updateStage struct {
+	session *gitstage.Session
+	indexes []int
+}
+
+func beginUpdateStages(ctx context.Context, requests []updateRequest, opts UpdateOptions) ([]updateStage, error) {
+	if opts.DryRun {
 		return nil, nil
 	}
-	sort.Strings(existing)
-
-	args := append([]string{"add", "--"}, existing...)
-	if _, err := runner.Run(ctx, Command{Dir: candidate.Dir, Name: "git", Args: args}); err != nil {
-		return nil, err
+	groups := map[string][]int{}
+	paths := map[string][]string{}
+	for i, request := range requests {
+		if selectedVersionIsCurrent(request.Candidate.Current, request.Version) {
+			continue
+		}
+		result, err := (ExecRunner{}).Run(ctx, Command{Dir: request.Candidate.Dir, Name: "git", Args: []string{"rev-parse", "--show-toplevel"}})
+		if err != nil {
+			return nil, fmt.Errorf("snapshot %s: %w: %s", request.Candidate.File, err, result.Stderr)
+		}
+		root := strings.TrimSpace(result.Stdout)
+		groups[root] = append(groups[root], i)
+		paths[root] = append(paths[root], workspaceFiles(request.Candidate)...)
 	}
-
-	staged := make([]string, 0, len(existing))
-	for _, rel := range existing {
-		staged = append(staged, cwdRelativePath(filepath.Join(candidate.Dir, filepath.FromSlash(rel))))
+	var stages []updateStage
+	roots := make([]string, 0, len(groups))
+	for root := range groups {
+		roots = append(roots, root)
 	}
-	sort.Strings(staged)
-	return staged, nil
+	sort.Strings(roots)
+	for _, root := range roots {
+		session, err := gitstage.Begin(ctx, root, paths[root])
+		if err != nil {
+			for _, stage := range stages {
+				err = errors.Join(err, stage.session.Close())
+			}
+			return nil, err
+		}
+		stages = append(stages, updateStage{session: session, indexes: groups[root]})
+	}
+	return stages, nil
+}
+
+func finishUpdateStages(ctx context.Context, plans []UpdatePlan, stages []updateStage) {
+	for _, stage := range stages {
+		changed, err := stage.session.Changed()
+		failed := err != nil
+		for _, i := range stage.indexes {
+			if plans[i].Error != "" {
+				failed = true
+			}
+		}
+		var staged []string
+		if !failed {
+			staged, err = stage.session.Stage(ctx)
+		}
+		err = errors.Join(err, stage.session.Close())
+		for _, i := range stage.indexes {
+			for _, path := range changed {
+				plans[i].ChangedFiles = append(plans[i].ChangedFiles, cwdRelativePath(filepath.Join(stage.session.Root, path)))
+			}
+			for _, path := range staged {
+				plans[i].Staged = append(plans[i].Staged, cwdRelativePath(filepath.Join(stage.session.Root, path)))
+			}
+			if err != nil {
+				plans[i].StageError = err.Error()
+			}
+		}
+	}
 }
 
 // updatedRepoFiles lists the files a manager rewrites during an update, relative

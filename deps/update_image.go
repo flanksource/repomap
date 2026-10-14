@@ -164,7 +164,7 @@ func applyImageTargetUpdate(ctx context.Context, candidate UpdateCandidate, vers
 		return plan
 	}
 	if candidate.Target == nil {
-		plan.Skipped = "missing image or Helm target metadata"
+		plan.Error = "missing image or Helm target metadata"
 		return plan
 	}
 	resolver := opts.ImageResolver
@@ -176,7 +176,7 @@ func applyImageTargetUpdate(ctx context.Context, candidate UpdateCandidate, vers
 	if target.Kind == imageupdate.TargetImage {
 		resolved, err := resolver.NewImageValue(ctx, target, version)
 		if err != nil {
-			plan.Skipped = err.Error()
+			plan.Error = err.Error()
 			return plan
 		}
 		newValue = resolved
@@ -187,7 +187,7 @@ func applyImageTargetUpdate(ctx context.Context, candidate UpdateCandidate, vers
 	}
 	absFile := filepath.Join(candidate.Dir, filepath.FromSlash(target.File))
 	if _, err := imageupdate.ApplyEdit(absFile, target, newValue, opts.DryRun); err != nil {
-		plan.Skipped = err.Error()
+		plan.Error = err.Error()
 		return plan
 	}
 	plan.Written = !opts.DryRun

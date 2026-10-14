@@ -78,12 +78,19 @@ func TestGoVersionLookupBatchAttributesPerModuleErrors(t *testing.T) {
 	runner := goListRunner(`{"Path":"github.com/acme/lib","Versions":["v1.0.0","v1.1.0"]}
 {"Path":"github.com/acme/tool","Error":{"Err":"module github.com/acme/tool: not found"}}`)
 
-	plans := checkPlansFor(t, dir, runner)
+	results, err := Update(context.Background(), dir, UpdateOptions{Managers: []Manager{ManagerGo}, Check: true, Runner: runner})
+	if err == nil {
+		t.Fatal("expected a module-resolution failure")
+	}
+	plans := map[string]UpdatePlan{}
+	for _, plan := range results {
+		plans[plan.Name] = plan
+	}
 
 	if plans["github.com/acme/lib"].NewVersion != "v1.1.0" {
 		t.Fatalf("lib plan = %#v, want the healthy sibling resolved", plans["github.com/acme/lib"])
 	}
-	if got := plans["github.com/acme/tool"].Skipped; got != "module github.com/acme/tool: not found" {
+	if got := plans["github.com/acme/tool"].Error; got != "module github.com/acme/tool: not found" {
 		t.Fatalf("tool skip reason = %q, want the module's own error", got)
 	}
 }

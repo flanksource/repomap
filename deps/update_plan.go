@@ -17,6 +17,8 @@ func (p UpdatePlan) Pretty() api.Text {
 		}
 	}
 	switch {
+	case p.Error != "":
+		t = t.Space().Append("failed: "+p.Error, "text-red-600")
 	case p.Skipped != "":
 		t = t.Space().Append("skipped: "+p.Skipped, "text-muted")
 	case p.Checked:
@@ -32,6 +34,9 @@ func (p UpdatePlan) Pretty() api.Text {
 	if p.StageError != "" {
 		t = t.Space().Append("stage failed: "+p.StageError, "text-yellow-600")
 	}
+	if p.SourceFile != "" {
+		t = t.Space().Append("catalog: "+p.SourceFile, "text-muted")
+	}
 	return t
 }
 
@@ -43,6 +48,13 @@ func (UpdatePlan) Columns() []api.ColumnDef {
 		api.Column("scope").Label("Scope").Build(),
 		api.Column("change").Label("Change").Build(),
 		api.Column("status").Label("Status").Build(),
+		api.Column("source_file").Label("Catalog").Build(),
+		api.Column("consumers").Hidden().Build(),
+		api.Column("command").Hidden().Build(),
+		api.Column("changed_files").Hidden().Build(),
+		api.Column("staged").Hidden().Build(),
+		api.Column("error").Hidden().Build(),
+		api.Column("stage_error").Hidden().Build(),
 	}
 }
 
@@ -55,6 +67,8 @@ func (p UpdatePlan) Row() map[string]any {
 		"change":     updateChangeText(p.OldVersion, p.NewVersion),
 	}
 	switch {
+	case p.Error != "":
+		row["status"] = clicky.Text("failed: "+p.Error, "text-red-600")
 	case p.Skipped != "":
 		row["status"] = clicky.Text(p.Skipped, "text-muted")
 	case p.Checked:
@@ -73,6 +87,25 @@ func (p UpdatePlan) Row() map[string]any {
 	default:
 		row["status"] = clicky.Text("")
 	}
+	if p.SourceFile != "" {
+		row["source_file"] = p.SourceFile
+		row["consumers"] = p.Consumers
+	}
+	if len(p.Command) > 0 {
+		row["command"] = p.Command
+	}
+	if p.Error != "" {
+		row["error"] = p.Error
+	}
+	if p.StageError != "" {
+		row["stage_error"] = p.StageError
+	}
+	if len(p.ChangedFiles) > 0 {
+		row["changed_files"] = p.ChangedFiles
+	}
+	if len(p.Staged) > 0 {
+		row["staged"] = p.Staged
+	}
 	return row
 }
 
@@ -85,13 +118,26 @@ func updateChangeText(oldVersion, newVersion string) api.Text {
 }
 
 func planFromCandidate(candidate UpdateCandidate) UpdatePlan {
-	return UpdatePlan{
+	plan := UpdatePlan{
 		Manager:    candidate.Manager,
 		Name:       candidate.Name,
 		File:       candidate.File,
 		Scope:      candidate.Scope,
 		OldVersion: candidate.Current,
 	}
+	if candidate.catalog != nil {
+		plan.SourceFile = cwdRelativePath(candidate.catalog.Workspace.File)
+		for _, consumer := range candidate.consumers {
+			plan.Consumers = append(plan.Consumers, cwdRelativePath(consumer))
+		}
+	}
+	return plan
+}
+
+func failedUpdatePlan(candidate UpdateCandidate, reason string) UpdatePlan {
+	plan := planFromCandidate(candidate)
+	plan.Error = reason
+	return plan
 }
 
 func skippedUpdatePlan(candidate UpdateCandidate, reason string) UpdatePlan {

@@ -32,7 +32,7 @@ func newRemoteRegistryClient(ctx context.Context, img *ContainerImage, creds Cre
 	if err != nil {
 		return nil, err
 	}
-	var auth authn.Authenticator = authn.Anonymous
+	auth := authn.Anonymous
 	if user != "" || pass != "" {
 		auth = authn.FromConfig(authn.AuthConfig{Username: user, Password: pass})
 	}

@@ -81,11 +81,8 @@ func TestUpdateSkipsSelectionWithNoStableVersion(t *testing.T) {
 		},
 	}
 
-	plans, err := Update(context.Background(), dir, UpdateOptions{
-		Managers:         []Manager{ManagerNPM},
-		Runner:           runner,
-		SelectCandidates: selectAllStable(),
-	})
+	plans, err := updateInTestRepo(context.Background(), dir, UpdateOptions{Managers: []Manager{ManagerNPM}, Runner: runner, SelectCandidates: selectAllStable()})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,14 +155,10 @@ func TestUpdateAppliesOnlyAfterEveryPromptIsAnswered(t *testing.T) {
 	}
 
 	var ranDuringSelection []string
-	if _, err := Update(context.Background(), dir, UpdateOptions{
-		Managers: []Manager{ManagerNPM},
-		Runner:   runner,
-		SelectCandidates: func(choices []UpdateChoice) ([]UpdateSelection, bool) {
-			ranDuringSelection = runner.ran()
-			return selectAllStable()(choices)
-		},
-	}); err != nil {
+	if _, err := updateInTestRepo(context.Background(), dir, UpdateOptions{Managers: []Manager{ManagerNPM}, Runner: runner, SelectCandidates: func(choices []UpdateChoice) ([]UpdateSelection, bool) {
+		ranDuringSelection = runner.ran()
+		return selectAllStable()(choices)
+	}}); err != nil {
 		t.Fatal(err)
 	}
 

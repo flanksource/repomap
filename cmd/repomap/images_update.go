@@ -25,7 +25,7 @@ func (opts UpdateImageOptions) Help() api.Text {
 	return clicky.Text(`DEPRECATED: use 'repomap deps update --manager image,helm' instead.
 
 Update container image tags and Helm chart versions in tracked manifests. This
-command now delegates to 'deps update', which additionally stages applied edits
+command now delegates to 'deps update', which stages only updater changes
 with git and resolves HelmRelease spec.chartRef (OCIRepository/HelmChart) charts.
 
 EXAMPLES:

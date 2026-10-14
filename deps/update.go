@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/flanksource/repomap"
+	"github.com/flanksource/repomap/deps/internal/pnpm"
 	"github.com/flanksource/repomap/imageupdate"
 	"golang.org/x/mod/modfile"
 )
@@ -82,13 +83,16 @@ type DiscoverFilter struct {
 }
 
 type UpdateCandidate struct {
-	Manager Manager                   `json:"manager"`
-	Name    string                    `json:"name"`
-	Current string                    `json:"current"`
-	Scope   string                    `json:"scope,omitempty"`
-	File    string                    `json:"file"`
-	Dir     string                    `json:"dir"`
-	Target  *imageupdate.UpdateTarget `json:"-"`
+	Manager   Manager                   `json:"manager"`
+	Name      string                    `json:"name"`
+	Current   string                    `json:"current"`
+	Scope     string                    `json:"scope,omitempty"`
+	File      string                    `json:"file"`
+	Dir       string                    `json:"dir"`
+	Target    *imageupdate.UpdateTarget `json:"-"`
+	workspace *pnpm.Workspace
+	catalog   *pnpm.Reference
+	consumers []string
 }
 
 type UpdateChoice struct {
@@ -115,19 +119,23 @@ type UpdateVersionPrompt struct {
 }
 
 type UpdatePlan struct {
-	Manager    Manager  `json:"manager"`
-	Name       string   `json:"name"`
-	File       string   `json:"file"`
-	Scope      string   `json:"scope,omitempty"`
-	OldVersion string   `json:"old_version"`
-	NewVersion string   `json:"new_version,omitempty"`
-	Command    []string `json:"command,omitempty"`
-	Written    bool     `json:"written"`
-	DryRun     bool     `json:"dry_run"`
-	Checked    bool     `json:"checked,omitempty"`
-	Skipped    string   `json:"skipped,omitempty"`
-	Staged     []string `json:"staged,omitempty"`
-	StageError string   `json:"stage_error,omitempty"`
+	Manager      Manager  `json:"manager"`
+	Name         string   `json:"name"`
+	File         string   `json:"file"`
+	Scope        string   `json:"scope,omitempty"`
+	OldVersion   string   `json:"old_version"`
+	NewVersion   string   `json:"new_version,omitempty"`
+	Command      []string `json:"command,omitempty"`
+	Written      bool     `json:"written"`
+	DryRun       bool     `json:"dry_run"`
+	Checked      bool     `json:"checked,omitempty"`
+	Skipped      string   `json:"skipped,omitempty"`
+	Staged       []string `json:"staged,omitempty"`
+	StageError   string   `json:"stage_error,omitempty"`
+	Error        string   `json:"error,omitempty"`
+	ChangedFiles []string `json:"changed_files,omitempty"`
+	SourceFile   string   `json:"source_file,omitempty"`
+	Consumers    []string `json:"consumers,omitempty"`
 }
 
 func Update(ctx context.Context, path string, opts UpdateOptions) ([]UpdatePlan, error) {
@@ -176,25 +184,28 @@ func Update(ctx context.Context, path string, opts UpdateOptions) ([]UpdatePlan,
 		for _, choice := range choices {
 			plansByKey[choice.Candidate.key()] = checkUpdatePlan(choice)
 		}
-		return orderedUpdatePlans(candidates, plansByKey), nil
+		return finishUpdate(orderedUpdatePlans(candidates, plansByKey))
 	}
 
 	// --version applies an explicit version to every matched dependency without
 	// listing available versions (it only validates image/helm availability).
 	if opts.Version != "" {
-		return applyExplicitVersionUpdates(ctx, candidates, opts), nil
+		return finishUpdate(applyExplicitVersionUpdates(ctx, candidates, opts))
 	}
 
 	choices, plansByKey := resolveUpdateChoices(ctx, candidates, opts)
+	if plans, err := finishUpdate(orderedUpdatePlans(candidates, plansByKey)); err != nil {
+		return plans, err
+	}
 
 	// --latest resolves each candidate to its highest stable version.
 	if opts.Latest {
 		applyLatestUpdates(ctx, candidates, choices, plansByKey, opts)
-		return orderedUpdatePlans(candidates, plansByKey), nil
+		return finishUpdate(orderedUpdatePlans(candidates, plansByKey))
 	}
 
 	if len(choices) == 0 {
-		return orderedUpdatePlans(candidates, plansByKey), nil
+		return finishUpdate(orderedUpdatePlans(candidates, plansByKey))
 	}
 
 	selectCandidates := opts.SelectCandidates
@@ -206,7 +217,7 @@ func Update(ctx context.Context, path string, opts UpdateOptions) ([]UpdatePlan,
 		for _, choice := range choices {
 			plansByKey[choice.Candidate.key()] = skippedUpdatePlan(choice.Candidate, "selection cancelled")
 		}
-		return orderedUpdatePlans(candidates, plansByKey), nil
+		return finishUpdate(orderedUpdatePlans(candidates, plansByKey))
 	}
 	selectedKeys := map[string]bool{}
 	for _, selection := range selected {
@@ -229,10 +240,10 @@ func Update(ctx context.Context, path string, opts UpdateOptions) ([]UpdatePlan,
 		}
 		requests = append(requests, updateRequest{Candidate: selection.Candidate, Version: version})
 	}
-	for key, plan := range applyUpdateRequests(ctx, requests, opts) {
+	for key, plan := range applyUpdateRequests(ctx, includeCatalogConsumers(candidates, requests), opts) {
 		plansByKey[key] = plan
 	}
-	return orderedUpdatePlans(candidates, plansByKey), nil
+	return finishUpdate(orderedUpdatePlans(candidates, plansByKey))
 }
 
 // noVersionSelectedReason distinguishes a dependency the user left unanswered
@@ -257,7 +268,7 @@ func DiscoverUpdateCandidates(path string, managers []Manager, filter DiscoverFi
 	var out []UpdateCandidate
 	var packageErr error
 	if packageManagers := packageUpdateManagers(managers); len(packageManagers) > 0 {
-		projects, _, err := Discover(absPath, packageManagers)
+		projects, err := discoverUpdateProjects(absPath, packageManagers)
 		if err != nil {
 			packageErr = err
 		} else {
@@ -365,12 +376,22 @@ func discoverGoUpdateCandidates(project Project) ([]UpdateCandidate, error) {
 func discoverPackageJSONUpdateCandidates(project Project) ([]UpdateCandidate, error) {
 	path := filepath.Join(project.Dir, "package.json")
 	data, err := os.ReadFile(path)
-	if err != nil {
+	if os.IsNotExist(err) {
 		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	var pkg packageJSON
 	if err := json.Unmarshal(data, &pkg); err != nil {
 		return nil, err
+	}
+	var workspace *pnpm.Workspace
+	if project.Manager == ManagerPNPM {
+		workspace, err = pnpm.Find(project.Dir)
+		if err != nil {
+			return nil, err
+		}
 	}
 	sections := []struct {
 		scope string
@@ -393,14 +414,30 @@ func discoverPackageJSONUpdateCandidates(project Project) ([]UpdateCandidate, er
 			if isLocalUpdateSpec(current) {
 				continue
 			}
-			out = append(out, UpdateCandidate{
-				Manager: project.Manager,
-				Name:    name,
-				Current: current,
-				Scope:   section.scope,
-				File:    path,
-				Dir:     project.Dir,
-			})
+			candidate := UpdateCandidate{
+				Manager:   project.Manager,
+				Name:      name,
+				Current:   current,
+				Scope:     section.scope,
+				File:      path,
+				Dir:       project.Dir,
+				workspace: workspace,
+			}
+			if strings.HasPrefix(current, "catalog:") {
+				if workspace == nil {
+					return nil, fmt.Errorf("%s: %s requires a pnpm workspace", path, current)
+				}
+				candidate.catalog, err = workspace.Resolve(name, current)
+				if err != nil {
+					return nil, err
+				}
+				candidate.Current = candidate.catalog.Current
+				candidate.consumers, err = candidate.catalog.Consumers()
+				if err != nil {
+					return nil, err
+				}
+			}
+			out = append(out, candidate)
 		}
 	}
 	return out, nil

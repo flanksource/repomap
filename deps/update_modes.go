@@ -18,6 +18,9 @@ func applyExplicitVersionUpdates(ctx context.Context, candidates []UpdateCandida
 		}
 		requests = append(requests, updateRequest{Candidate: candidate, Version: opts.Version})
 	}
+	if plans, err := finishUpdate(orderedUpdatePlans(candidates, plansByKey)); err != nil {
+		return plans
+	}
 	for key, plan := range applyUpdateRequests(ctx, requests, opts) {
 		plansByKey[key] = plan
 	}
@@ -36,10 +39,10 @@ func explicitVersionSkip(ctx context.Context, candidate UpdateCandidate, opts Up
 	}
 	available, _, _, err := availableImageTargetVersions(ctx, opts.ImageResolver, candidate)
 	if err != nil {
-		return skippedUpdatePlan(candidate, err.Error()), true
+		return failedUpdatePlan(candidate, err.Error()), true
 	}
 	if !containsString(available, opts.Version) {
-		return skippedUpdatePlan(candidate, fmt.Sprintf("version %q is not available", opts.Version)), true
+		return failedUpdatePlan(candidate, fmt.Sprintf("version %q is not available", opts.Version)), true
 	}
 	return UpdatePlan{}, false
 }

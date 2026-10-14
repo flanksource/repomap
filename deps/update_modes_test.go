@@ -44,15 +44,8 @@ func setupImageRepo(t *testing.T, files map[string]string) string {
 func TestUpdate_LatestSelectsHighestStable(t *testing.T) {
 	setupImageRepo(t, map[string]string{"apps/workloads.yaml": deploymentUpdateFixture})
 
-	plans, err := Update(context.Background(), ".", UpdateOptions{
-		Managers: []Manager{ManagerImage},
-		Latest:   true,
-		DryRun:   true,
-		ImageResolver: fakeImageVersionResolver{
-			"nginx":                     {"1.28.0-rc.1", "1.27.0", "1.25.3"},
-			"ghcr.io/flanksource/proxy": {"v0.4.1"},
-		},
-	})
+	plans, err := updateInTestRepo(context.Background(), ".", UpdateOptions{Managers: []Manager{ManagerImage}, Latest: true, DryRun: true, ImageResolver: fakeImageVersionResolver{"nginx": {"1.28.0-rc.1", "1.27.0", "1.25.3"}, "ghcr.io/flanksource/proxy": {"v0.4.1"}}})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,12 +63,8 @@ func TestUpdate_LatestSelectsHighestStable(t *testing.T) {
 func TestUpdate_ExplicitVersionWritesEdit(t *testing.T) {
 	dir := setupImageRepo(t, map[string]string{"apps/workloads.yaml": deploymentUpdateFixture})
 
-	plans, err := Update(context.Background(), ".", UpdateOptions{
-		Managers:      []Manager{ManagerImage},
-		Image:         []string{"nginx"},
-		Version:       "1.27.0",
-		ImageResolver: fakeImageVersionResolver{"nginx": {"1.27.0", "1.25.3"}},
-	})
+	plans, err := updateInTestRepo(context.Background(), ".", UpdateOptions{Managers: []Manager{ManagerImage}, Image: []string{"nginx"}, Version: "1.27.0", ImageResolver: fakeImageVersionResolver{"nginx": {"1.27.0", "1.25.3"}}})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,20 +86,16 @@ func TestUpdate_ExplicitVersionWritesEdit(t *testing.T) {
 func TestUpdate_ExplicitVersionRejectsUnavailable(t *testing.T) {
 	setupImageRepo(t, map[string]string{"apps/workloads.yaml": deploymentUpdateFixture})
 
-	plans, err := Update(context.Background(), ".", UpdateOptions{
-		Managers:      []Manager{ManagerImage},
-		Image:         []string{"nginx"},
-		Version:       "9.9.9",
-		ImageResolver: fakeImageVersionResolver{"nginx": {"1.27.0", "1.25.3"}},
-	})
-	if err != nil {
-		t.Fatal(err)
+	plans, err := updateInTestRepo(context.Background(), ".", UpdateOptions{Managers: []Manager{ManagerImage}, Image: []string{"nginx"}, Version: "9.9.9", ImageResolver: fakeImageVersionResolver{"nginx": {"1.27.0", "1.25.3"}}})
+
+	if err == nil {
+		t.Fatal("expected an unavailable-version failure")
 	}
 	if len(plans) != 1 || plans[0].Written {
 		t.Fatalf("plans = %#v, want one unwritten plan", plans)
 	}
-	if !strings.Contains(plans[0].Skipped, "not available") {
-		t.Fatalf("skip = %q, want 'not available'", plans[0].Skipped)
+	if !strings.Contains(plans[0].Error, "not available") {
+		t.Fatalf("failure = %q, want 'not available'", plans[0].Error)
 	}
 }
 
@@ -120,12 +105,8 @@ func TestUpdate_ResourceFilterKindNarrowsToHelm(t *testing.T) {
 		"apps/helmrelease.yaml": helmReleaseUpdateFixture,
 	})
 
-	plans, err := Update(context.Background(), ".", UpdateOptions{
-		Managers:      []Manager{ManagerImage, ManagerHelm},
-		Kind:          []string{"HelmRelease"},
-		Check:         true,
-		ImageResolver: fakeImageVersionResolver{"podinfo": {"6.6.0", "6.5.0"}},
-	})
+	plans, err := updateInTestRepo(context.Background(), ".", UpdateOptions{Managers: []Manager{ManagerImage, ManagerHelm}, Kind: []string{"HelmRelease"}, Check: true, ImageResolver: fakeImageVersionResolver{"podinfo": {"6.6.0", "6.5.0"}}})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,11 +128,8 @@ func TestUpdate_DedupesVersionLookupsAcrossDuplicates(t *testing.T) {
 		"ghcr.io/flanksource/proxy": {"v0.5.0", "v0.4.1"},
 	})
 
-	plans, err := Update(context.Background(), ".", UpdateOptions{
-		Managers:      []Manager{ManagerImage},
-		Check:         true,
-		ImageResolver: resolver,
-	})
+	plans, err := updateInTestRepo(context.Background(), ".", UpdateOptions{Managers: []Manager{ManagerImage}, Check: true, ImageResolver: resolver})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,12 +157,8 @@ func TestUpdate_FilterThenChecksOnlyFilteredSet(t *testing.T) {
 		"podinfo":                   {"6.6.0", "6.5.0"},
 	})
 
-	plans, err := Update(context.Background(), ".", UpdateOptions{
-		Managers:      []Manager{ManagerImage, ManagerHelm},
-		Kind:          []string{"HelmRelease"},
-		Check:         true,
-		ImageResolver: resolver,
-	})
+	plans, err := updateInTestRepo(context.Background(), ".", UpdateOptions{Managers: []Manager{ManagerImage, ManagerHelm}, Kind: []string{"HelmRelease"}, Check: true, ImageResolver: resolver})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,10 +192,8 @@ func TestUpdate_BuildsOneImageResolverPerRun(t *testing.T) {
 	defer restore()
 
 	// ImageResolver is deliberately left nil so Update takes the default path.
-	plans, err := Update(context.Background(), ".", UpdateOptions{
-		Managers: []Manager{ManagerImage, ManagerHelm},
-		Check:    true,
-	})
+	plans, err := updateInTestRepo(context.Background(), ".", UpdateOptions{Managers: []Manager{ManagerImage, ManagerHelm}, Check: true})
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,13 +218,7 @@ func TestUpdate_SkipsImageResolverForPackageManagerOnlyRuns(t *testing.T) {
 	})
 	defer restore()
 
-	if _, err := Update(context.Background(), ".", UpdateOptions{
-		Managers: []Manager{ManagerGo},
-		Check:    true,
-		Runner: &updateFakeRunner{responses: map[string]CommandResult{
-			"go list -m -versions -json github.com/acme/lib": {Stdout: `{"Versions":["v1.0.0","v1.1.0"]}`},
-		}},
-	}); err != nil {
+	if _, err := updateInTestRepo(context.Background(), ".", UpdateOptions{Managers: []Manager{ManagerGo}, Check: true, Runner: &updateFakeRunner{responses: map[string]CommandResult{"go list -m -versions -json github.com/acme/lib": {Stdout: `{"Versions":["v1.0.0","v1.1.0"]}`}}}}); err != nil {
 		t.Fatal(err)
 	}
 	if built != 0 {
@@ -263,11 +229,8 @@ func TestUpdate_SkipsImageResolverForPackageManagerOnlyRuns(t *testing.T) {
 func TestUpdate_NoFiltersMatchesAll(t *testing.T) {
 	setupImageRepo(t, map[string]string{"apps/helmrelease.yaml": helmReleaseUpdateFixture})
 
-	plans, err := Update(context.Background(), ".", UpdateOptions{
-		Managers:      []Manager{ManagerHelm},
-		Check:         true,
-		ImageResolver: fakeImageVersionResolver{"podinfo": {"6.6.0", "6.5.0"}},
-	})
+	plans, err := updateInTestRepo(context.Background(), ".", UpdateOptions{Managers: []Manager{ManagerHelm}, Check: true, ImageResolver: fakeImageVersionResolver{"podinfo": {"6.6.0", "6.5.0"}}})
+
 	if err != nil {
 		t.Fatalf("empty expression should match all, got %v", err)
 	}
