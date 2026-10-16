@@ -13,7 +13,7 @@ import (
 
 type DepsOptions struct {
 	Path            string   `json:"path" args:"true" help:"Path to scan (defaults to current directory)"`
-	Manager         []string `json:"manager,omitempty" flag:"manager" help:"Dependency manager to include: go, maven, gradle, npm, pnpm, image/docker, helm (repeatable or comma-separated)"`
+	Manager         []string `json:"manager,omitempty" flag:"manager" help:"Dependency manager to include: go, maven, gradle, npm, pnpm, actions, image/docker, helm (repeatable or comma-separated)"`
 	Depth           int      `json:"depth,omitempty" flag:"depth" default:"1" help:"Maximum dependency depth (1 = direct only, 0 = unlimited)"`
 	Filter          []string `json:"filter,omitempty" flag:"filter" help:"Dependency filter patterns matched against id, name, version, manager, source, or path; supports comma-separated values and !exclusions"`
 	Kind            []string `json:"kind,omitempty" flag:"kind,k" help:"Filter image/helm dependencies by Kubernetes kind, e.g. HelmRelease,Deployment (MatchItem syntax)"`
@@ -26,21 +26,22 @@ type DepsOptions struct {
 }
 
 type DepsUpdateOptions struct {
-	Args      []string `json:"args" args:"true" help:"Optional dependency MatchItem expression followed by optional path"`
-	Manager   []string `json:"manager,omitempty" flag:"manager" help:"Dependency manager to update: go, npm, pnpm, image/docker, helm (repeatable or comma-separated)"`
-	Filter    []string `json:"filter,omitempty" flag:"filter" help:"Dependency filter patterns (MatchItem syntax) matched against name, manager, manager:name, manager:name@version, scope, and version; use path:/file: for manifest paths; supports comma-separated values and !exclusions"`
-	Kind      []string `json:"kind,omitempty" flag:"kind,k" help:"Filter image/helm targets by kind, e.g. HelmRelease,Deployment (MatchItem syntax)"`
-	Namespace []string `json:"namespace,omitempty" flag:"namespace,n" help:"Filter image/helm targets by namespace (MatchItem syntax)"`
-	Name      []string `json:"name,omitempty" flag:"name" help:"Filter image/helm targets by resource name (MatchItem syntax)"`
-	Selector  []string `json:"selector,omitempty" flag:"selector,l" help:"Filter image/helm targets by label selector, e.g. app=nginx"`
-	Image     []string `json:"image,omitempty" flag:"image" help:"Only container images matching this repo pattern (MatchItem syntax)"`
-	Chart     []string `json:"chart,omitempty" flag:"chart" help:"Only Helm charts matching this name (MatchItem syntax)"`
-	Latest    bool     `json:"latest,omitempty" flag:"latest" help:"Resolve each matched dependency to its highest stable version without prompting"`
-	Stable    bool     `json:"stable,omitempty" flag:"stable" help:"Alias for --latest"`
-	Yes       bool     `json:"yes,omitempty" flag:"yes,y" help:"Skip the selection tree and apply the highest stable version to every matched dependency"`
-	Version   string   `json:"version,omitempty" flag:"version" help:"Apply this concrete version to all matched dependencies"`
-	Check     bool     `json:"check" flag:"check" help:"Resolve and list available updates without prompting or writing"`
-	DryRun    bool     `json:"dry_run" flag:"dry-run" help:"Show planned dependency updates without running package-manager commands"`
+	Args        []string `json:"args" args:"true" help:"Optional dependency MatchItem expression followed by optional path"`
+	Manager     []string `json:"manager,omitempty" flag:"manager" help:"Dependency manager to update: go, npm, pnpm, actions, image/docker, helm (repeatable or comma-separated)"`
+	Filter      []string `json:"filter,omitempty" flag:"filter" help:"Dependency filter patterns (MatchItem syntax) matched against name, manager, manager:name, manager:name@version, scope, and version; use path:/file: for manifest paths; supports comma-separated values and !exclusions"`
+	Kind        []string `json:"kind,omitempty" flag:"kind,k" help:"Filter image/helm targets by kind, e.g. HelmRelease,Deployment (MatchItem syntax)"`
+	Namespace   []string `json:"namespace,omitempty" flag:"namespace,n" help:"Filter image/helm targets by namespace (MatchItem syntax)"`
+	Name        []string `json:"name,omitempty" flag:"name" help:"Filter image/helm targets by resource name (MatchItem syntax)"`
+	Selector    []string `json:"selector,omitempty" flag:"selector,l" help:"Filter image/helm targets by label selector, e.g. app=nginx"`
+	Image       []string `json:"image,omitempty" flag:"image" help:"Only container images matching this repo pattern (MatchItem syntax)"`
+	Chart       []string `json:"chart,omitempty" flag:"chart" help:"Only Helm charts matching this name (MatchItem syntax)"`
+	Latest      bool     `json:"latest,omitempty" flag:"latest" help:"Resolve each matched dependency to its highest stable version without prompting (skips Git sourced npm/pnpm dependencies)"`
+	Stable      bool     `json:"stable,omitempty" flag:"stable" help:"Alias for --latest"`
+	Yes         bool     `json:"yes,omitempty" flag:"yes,y" help:"Skip the selection tree and apply the highest stable version to every matched dependency"`
+	Interactive bool     `json:"interactive,omitempty" flag:"interactive,i" help:"Show every dependency in the selection tree, including those with no newer version"`
+	Version     string   `json:"version,omitempty" flag:"version" help:"Apply this concrete version to all matched dependencies (Git sourced npm/pnpm dependencies require the interactive v SHA picker)"`
+	Check       bool     `json:"check" flag:"check" help:"Resolve and list available updates without prompting or writing (skips Git sourced npm/pnpm dependencies)"`
+	DryRun      bool     `json:"dry_run" flag:"dry-run" help:"Show planned dependency updates without running package-manager commands"`
 }
 
 func (opts DepsOptions) GetName() string { return "deps" }
@@ -48,12 +49,13 @@ func (opts DepsOptions) GetName() string { return "deps" }
 func (opts DepsUpdateOptions) GetName() string { return "update [expr] [path]" }
 
 func (opts DepsOptions) Help() api.Text {
-	return clicky.Text(`Generate dependency graphs for Go, Maven, Gradle, npm, pnpm, image, and Helm dependencies.
+	return clicky.Text(`Generate dependency graphs for Go, Maven, Gradle, npm, pnpm, Actions, image, and Helm dependencies.
 
 Repomap auto-detects supported manifests below the selected path and resolves
 dependency graphs from local manifest and lockfile content without running
 package-manager commands. Image and Helm dependencies are discovered from
-git-tracked Kubernetes manifests.
+git-tracked Kubernetes manifests. GitHub Actions dependencies are read from
+workflow and composite-action YAML files.
 
 For Go, Maven, and Gradle, --depth other than 1 resolves transitive dependencies
 by shelling out to the package manager (go mod graph, mvn dependency:tree,
@@ -98,7 +100,7 @@ EXAMPLES:
 }
 
 func (opts DepsUpdateOptions) Help() api.Text {
-	return clicky.Text(`Update direct package, image, and Helm chart dependencies.
+	return clicky.Text(`Update direct package, GitHub Actions, image, and Helm chart dependencies.
 
 Dependencies are narrowed with --filter and/or the optional positional expr;
 both use commons MatchItem syntax, accept comma-separated values and
@@ -116,7 +118,7 @@ release — and both decisions are made on that one screen, so nothing is applie
 until you confirm:
 
   space       toggle the row          n / s   target the highest stable version
-  a           toggle the manifest     v       pick a specific version
+  a           toggle the manifest     v       pick a version or Git commit (SHA)
   ctrl+a      toggle everything       /       filter
   h / l       collapse / expand       enter   confirm      esc  cancel
 
@@ -124,6 +126,23 @@ Rows with only pre-releases newer than the current version show "no stable
 version" and need an explicit pick with v. A dependency declared in several
 manifests at the same version is one decision: picking its version answers every
 occurrence. Occurrences sitting at different current versions stay separate.
+
+Use -i (or --interactive) to show every discovered dependency, including rows
+with no newer version. These rows are marked "up to date" and are skipped if
+selected. -i cannot be combined with --check, --latest/--stable, -y, or --version.
+
+The actions manager discovers external step actions, reusable workflow jobs,
+and composite-action steps. --latest takes the newest stable full release tag;
+--version accepts an advertised tag. Existing full-SHA pins remain SHA-pinned
+and their version comments are updated. Local, Docker, and non-version refs
+are reported as skipped. A SHA with no matching version tag fails automatic
+resolution rather than guessing its current version.
+
+For Go modules and Git sourced npm/pnpm dependencies, press v and select Git
+commit (SHA). Choose a branch or advertised GitHub pull request / GitLab merge
+request head, then a recent commit. The full SHA is pinned. Git sourced Node
+dependencies require this interactive choice; --check and --latest skip them,
+and --version rejects them.
 
 Use -y (or --latest/--stable) to skip the tree and take the highest stable
 version for everything, or --version to apply a concrete version. Confirmed
@@ -141,7 +160,9 @@ EXAMPLES:
   repomap deps update 'github.com/flanksource/*'
   repomap deps update '*' --check
   repomap deps update --manager helm -k HelmRelease --latest
+  repomap deps update --manager actions --check .github/workflows
   repomap deps update -y
+  repomap deps update -i
   repomap deps update --manager image -n default --version 1.27.0
   repomap deps update 'path:apps/*/package.json'
   repomap deps update 'helm:mission-control' --manager helm
@@ -151,10 +172,10 @@ EXAMPLES:
 
 func init() {
 	cmd := clicky.AddNamedCommandWithContext("deps", rootCmd, DepsOptions{}, runDeps)
-	cmd.Short = "Generate dependency graphs for Go, Maven, Gradle, npm, and pnpm projects"
+	cmd.Short = "Generate dependency graphs for Go, Maven, Gradle, npm, pnpm, and Actions projects"
 
 	updateCmd := clicky.AddNamedCommandWithContext("update", cmd, DepsUpdateOptions{}, runDepsUpdate)
-	updateCmd.Short = "Update direct package, image, and Helm chart dependencies"
+	updateCmd.Short = "Update direct package, GitHub Actions, image, and Helm chart dependencies"
 
 	registerDepsDiff(cmd)
 }
@@ -209,10 +230,11 @@ func runDepsUpdate(ctx context.Context, opts DepsUpdateOptions) (any, error) {
 		Chart:     opts.Chart,
 		// --stable and -y both mean "highest stable, no prompting", which is
 		// exactly what --latest already does.
-		Latest:  opts.Latest || opts.Stable || opts.Yes,
-		Version: opts.Version,
-		Check:   opts.Check,
-		DryRun:  opts.DryRun,
+		Latest:      opts.Latest || opts.Stable || opts.Yes,
+		Interactive: opts.Interactive,
+		Version:     opts.Version,
+		Check:       opts.Check,
+		DryRun:      opts.DryRun,
 	})
 	if err != nil {
 		return nil, err
@@ -266,10 +288,10 @@ func parseManagers(values []string) ([]depgraph.Manager, error) {
 		switch manager {
 		case "docker":
 			out = append(out, depgraph.ManagerImage)
-		case depgraph.ManagerGo, depgraph.ManagerMaven, depgraph.ManagerGradle, depgraph.ManagerNPM, depgraph.ManagerPNPM, depgraph.ManagerImage, depgraph.ManagerHelm:
+		case depgraph.ManagerGo, depgraph.ManagerMaven, depgraph.ManagerGradle, depgraph.ManagerNPM, depgraph.ManagerPNPM, depgraph.ManagerActions, depgraph.ManagerImage, depgraph.ManagerHelm:
 			out = append(out, manager)
 		default:
-			return nil, fmt.Errorf("unsupported dependency manager %q (expected go, maven, gradle, npm, pnpm, image/docker, or helm)", part)
+			return nil, fmt.Errorf("unsupported dependency manager %q (expected go, maven, gradle, npm, pnpm, actions, image/docker, or helm)", part)
 		}
 	}
 	return out, nil
@@ -286,10 +308,10 @@ func parseUpdateManagers(values []string) ([]depgraph.Manager, error) {
 		switch manager {
 		case "docker":
 			out = append(out, depgraph.ManagerImage)
-		case depgraph.ManagerGo, depgraph.ManagerNPM, depgraph.ManagerPNPM, depgraph.ManagerImage, depgraph.ManagerHelm:
+		case depgraph.ManagerGo, depgraph.ManagerNPM, depgraph.ManagerPNPM, depgraph.ManagerActions, depgraph.ManagerImage, depgraph.ManagerHelm:
 			out = append(out, manager)
 		default:
-			return nil, fmt.Errorf("unsupported dependency update manager %q (expected go, npm, pnpm, image/docker, or helm)", part)
+			return nil, fmt.Errorf("unsupported dependency update manager %q (expected go, npm, pnpm, actions, image/docker, or helm)", part)
 		}
 	}
 	return out, nil

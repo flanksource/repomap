@@ -133,7 +133,7 @@ func TestDepsUpdateCommandRegistered(t *testing.T) {
 	if manager == nil {
 		t.Fatal("manager flag not registered")
 	}
-	if !strings.Contains(manager.Usage, "go, npm, pnpm, image/docker, helm") {
+	if !strings.Contains(manager.Usage, "go, npm, pnpm, actions, image/docker, helm") {
 		t.Fatalf("manager help should document update-supported managers, got %q", manager.Usage)
 	}
 }
