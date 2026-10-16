@@ -75,7 +75,7 @@ repomap eval --expr 'kubernetes.kind == "Secret"'
 
 ### `deps`
 
-Generate dependency graphs for Go, Maven, Gradle, npm, and pnpm projects.
+Generate dependency graphs for Go, Maven, Gradle, npm, pnpm, and GitHub Actions projects.
 
 ```bash
 # Pretty tree output
@@ -109,7 +109,24 @@ repomap deps update '@flanksource/clicky-ui' ../gavel --latest --dry-run --json
 
 # Apply a selected dependency version
 repomap deps update '@example/ui' ./web --version 2.0.0
+
+# Preview external action and reusable workflow updates
+repomap deps update --manager actions --check .github/workflows
+
+# Preview the newest stable exact release tags without writing
+repomap deps update --manager actions --latest --dry-run .github/workflows
+
+# Show every dependency in the picker, including those already up to date
+repomap deps update -i ./web
+
+# Open the picker, press v on a Go module or Git sourced npm/pnpm dependency,
+# choose Git commit (SHA), then choose a remote branch or PR head and a commit
+repomap deps update 'github.com/flanksource/clicky' ./service
 ```
+
+The SHA picker lists remote branches and the 30 newest advertised GitHub pull request or GitLab merge request heads by tip commit date, then shows up to 30 recent commits from the selected ref. It pins the full commit SHA. Go writes the toolchain's canonical module version for that commit; npm and pnpm retain the declared Git source with `#<sha>`. pnpm catalog references and comments remain intact. `--check` and `--latest` skip Git sourced npm/pnpm dependencies with a reason, and `--version` rejects them so a registry version cannot replace a Git source.
+
+The `actions` manager scans `.github/workflows/*.yml|yaml` and composite `action.yml|yaml` files. It finds external step actions and reusable workflow jobs. Local actions, Docker actions, branch refs, and references without a version are reported as skipped. `--latest` selects the highest stable full release tag, such as `v5.0.1`; `--version` accepts an advertised tag. Existing full-SHA pins stay pinned to the selected tag's commit, and recognized version comments are updated. A SHA pin that cannot be matched to an advertised version tag fails `--check` and `--latest` with a per-reference error. Git's configured credentials are used for private repositories.
 
 pnpm workspace members share their owning workspace lockfile. Default and named catalog references are resolved before comparing versions, and catalog updates preserve the references in package manifests. Previews identify the catalog file and affected consumers. Selecting a catalog update affects every consumer of that entry, including consumers outside a file filter. Selecting different versions for the same catalog entry fails before writing.
 
