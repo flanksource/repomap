@@ -7,11 +7,12 @@ package manifest
 type Manager string
 
 const (
-	ManagerGo     Manager = "go"
-	ManagerMaven  Manager = "maven"
-	ManagerGradle Manager = "gradle"
-	ManagerNPM    Manager = "npm"
-	ManagerPNPM   Manager = "pnpm"
-	ManagerImage  Manager = "image"
-	ManagerHelm   Manager = "helm"
+	ManagerGo      Manager = "go"
+	ManagerMaven   Manager = "maven"
+	ManagerGradle  Manager = "gradle"
+	ManagerNPM     Manager = "npm"
+	ManagerPNPM    Manager = "pnpm"
+	ManagerActions Manager = "actions"
+	ManagerImage   Manager = "image"
+	ManagerHelm    Manager = "helm"
 )

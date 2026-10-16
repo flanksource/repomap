@@ -8,6 +8,7 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/flanksource/repomap/deps/internal/gitspec"
 	"github.com/flanksource/repomap/imageupdate"
 	"gopkg.in/yaml.v3"
 )
@@ -111,8 +112,14 @@ func (w *Workspace) Resolve(name, spec string) (*Reference, error) {
 	if !ok {
 		return nil, fmt.Errorf("%s: missing %s entry for %s", w.File, spec, name)
 	}
-	if _, err := semver.NewConstraint(current); err != nil {
-		return nil, fmt.Errorf("%s: invalid %s version for %s: %w", w.File, spec, name, err)
+	_, isGit, err := gitspec.Parse(current)
+	if err != nil {
+		return nil, fmt.Errorf("%s: invalid %s Git source for %s: %w", w.File, spec, name, err)
+	}
+	if !isGit {
+		if _, err := semver.NewConstraint(current); err != nil {
+			return nil, fmt.Errorf("%s: invalid %s version for %s: %w", w.File, spec, name, err)
+		}
 	}
 	data, err := os.ReadFile(w.File)
 	if err != nil {
@@ -145,6 +152,21 @@ func (w *Workspace) Resolve(name, spec string) (*Reference, error) {
 func (r *Reference) Key() string { return r.Workspace.File + "\x00" + r.Catalog + "\x00" + r.Name }
 
 func (r *Reference) Apply(version string, dryRun bool) error {
+	currentGit, isGit, err := gitspec.Parse(r.Current)
+	if err != nil {
+		return err
+	}
+	if isGit {
+		selected, selectedGit, err := gitspec.Parse(version)
+		if err != nil {
+			return err
+		}
+		if !selectedGit || selected.Base != currentGit.Base || !gitspec.ValidCommitSHA(selected.Ref) {
+			return fmt.Errorf("%s: selected Git catalog version must pin the original source to a full commit SHA", r.Workspace.File)
+		}
+		_, err = imageupdate.ApplyEdit(r.Workspace.File, imageupdate.UpdateTarget{File: r.Workspace.File, FieldLine: r.Line}, version, dryRun)
+		return err
+	}
 	if _, err := semver.NewVersion(version); err != nil {
 		return err
 	}
@@ -156,6 +178,6 @@ func (r *Reference) Apply(version string, dryRun bool) error {
 	if _, err := semver.NewVersion(current); err != nil {
 		return fmt.Errorf("%s: cannot preserve complex catalog range %q", r.Workspace.File, r.Current)
 	}
-	_, err := imageupdate.ApplyEdit(r.Workspace.File, imageupdate.UpdateTarget{File: r.Workspace.File, FieldLine: r.Line}, prefix+version, dryRun)
+	_, err = imageupdate.ApplyEdit(r.Workspace.File, imageupdate.UpdateTarget{File: r.Workspace.File, FieldLine: r.Line}, prefix+version, dryRun)
 	return err
 }

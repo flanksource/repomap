@@ -275,6 +275,8 @@ func resolveManifest(ctx context.Context, project Project, opts Options) (*Node,
 		return resolveNPMManifest(project)
 	case ManagerPNPM:
 		return resolvePNPMManifest(project)
+	case ManagerActions:
+		return resolveActionsManifest(project)
 	default:
 		return nil, nil, fmt.Errorf("unsupported manager %q", project.Manager)
 	}
@@ -299,7 +301,7 @@ func packageScanManagers(managers []Manager) []Manager {
 	out := make([]Manager, 0, len(managers))
 	for _, manager := range managers {
 		switch manager {
-		case ManagerGo, ManagerMaven, ManagerGradle, ManagerNPM, ManagerPNPM:
+		case ManagerGo, ManagerMaven, ManagerGradle, ManagerNPM, ManagerPNPM, ManagerActions:
 			out = append(out, manager)
 		}
 	}

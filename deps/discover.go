@@ -38,7 +38,9 @@ func discover(root string, managers []Manager, useGit bool) ([]Project, []Warnin
 	if err != nil {
 		return nil, nil, err
 	}
+	singleFile := ""
 	if !info.IsDir() {
+		singleFile = absRoot
 		absRoot = filepath.Dir(absRoot)
 	}
 
@@ -50,7 +52,10 @@ func discover(root string, managers []Manager, useGit bool) ([]Project, []Warnin
 	byDir := map[string]map[string]string{}
 	for _, path := range files {
 		name := filepath.Base(path)
-		manager := managerForManifest(name)
+		manager := managerForManifest(path)
+		if manager == ManagerActions && singleFile != "" && path != singleFile {
+			continue
+		}
 		if manager == "" {
 			continue
 		}
@@ -106,13 +111,21 @@ func discover(root string, managers []Manager, useGit bool) ([]Project, []Warnin
 		} else if path := files["package.json"]; path != "" && (len(selected) == 0 || selected[ManagerNPM]) {
 			projects = append(projects, Project{Manager: ManagerNPM, Dir: dir, File: path, Name: filepath.Base(dir)})
 		}
+		for _, path := range files {
+			if managerForManifest(path) == ManagerActions {
+				projects = append(projects, Project{Manager: ManagerActions, Dir: dir, File: path, Name: filepath.Base(path)})
+			}
+		}
 	}
 
 	sort.Slice(projects, func(i, j int) bool {
 		if projects[i].Dir != projects[j].Dir {
 			return projects[i].Dir < projects[j].Dir
 		}
-		return projects[i].Manager < projects[j].Manager
+		if projects[i].Manager != projects[j].Manager {
+			return projects[i].Manager < projects[j].Manager
+		}
+		return projects[i].File < projects[j].File
 	})
 	if len(projects) == 0 {
 		return nil, warnings, fmt.Errorf("no supported dependency manifests found under %s", absRoot)
@@ -140,8 +153,7 @@ func gitManifestFiles(root string) ([]string, bool) {
 		if rel == "" {
 			continue
 		}
-		name := filepath.Base(filepath.FromSlash(rel))
-		if managerForManifest(name) == "" {
+		if managerForManifest(filepath.Join(root, filepath.FromSlash(rel))) == "" {
 			continue
 		}
 		files = append(files, filepath.Join(root, filepath.FromSlash(rel)))
@@ -162,8 +174,7 @@ func walkManifestFiles(root string) ([]string, error) {
 			}
 			return nil
 		}
-		name := d.Name()
-		manager := managerForManifest(name)
+		manager := managerForManifest(path)
 		if manager == "" {
 			return nil
 		}
@@ -177,7 +188,11 @@ func walkManifestFiles(root string) ([]string, error) {
 	return files, nil
 }
 
-func managerForManifest(name string) Manager {
+func managerForManifest(path string) Manager {
+	name := filepath.Base(path)
+	if name == "action.yml" || name == "action.yaml" || (filepath.Base(filepath.Dir(path)) == "workflows" && filepath.Base(filepath.Dir(filepath.Dir(path))) == ".github" && (strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml"))) {
+		return ManagerActions
+	}
 	switch strings.ToLower(name) {
 	case "go.mod", "go.work":
 		return ManagerGo

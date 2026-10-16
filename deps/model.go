@@ -13,13 +13,14 @@ import (
 type Manager = manifest.Manager
 
 const (
-	ManagerGo     = manifest.ManagerGo
-	ManagerMaven  = manifest.ManagerMaven
-	ManagerGradle = manifest.ManagerGradle
-	ManagerNPM    = manifest.ManagerNPM
-	ManagerPNPM   = manifest.ManagerPNPM
-	ManagerImage  = manifest.ManagerImage
-	ManagerHelm   = manifest.ManagerHelm
+	ManagerGo      = manifest.ManagerGo
+	ManagerMaven   = manifest.ManagerMaven
+	ManagerGradle  = manifest.ManagerGradle
+	ManagerNPM     = manifest.ManagerNPM
+	ManagerPNPM    = manifest.ManagerPNPM
+	ManagerActions = manifest.ManagerActions
+	ManagerImage   = manifest.ManagerImage
+	ManagerHelm    = manifest.ManagerHelm
 )
 
 type Mode string
