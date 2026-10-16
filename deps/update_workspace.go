@@ -31,6 +31,9 @@ func discoverUpdateProjects(root string, managers []Manager) ([]Project, error) 
 			}
 		}
 		key := string(project.Manager) + "\x00" + project.Dir
+		if project.Manager == ManagerActions {
+			key += "\x00" + project.File
+		}
 		if selected[project.Manager] && !seen[key] {
 			seen[key] = true
 			out = append(out, project)

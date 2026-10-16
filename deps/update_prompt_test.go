@@ -25,7 +25,7 @@ func TestUpdateTreeVersionPickAppliesToEveryOccurrence(t *testing.T) {
 	defer restore()
 
 	node := findUpdateTreeLeaf(t, model.root, "left-pad", "api/package.json")
-	promptUpdateTreeVersion(model.root, node)
+	promptUpdateTreeVersion(model.root, node, selectUpdateVersion)
 
 	if len(prompts) != 1 {
 		t.Fatalf("version prompts = %d, want 1 shared question: %#v", len(prompts), prompts)
@@ -56,7 +56,7 @@ func TestUpdateTreeDeclinedVersionPickLeavesRowsUnchanged(t *testing.T) {
 	defer restore()
 
 	node := findUpdateTreeLeaf(t, model.root, "left-pad", "api/package.json")
-	promptUpdateTreeVersion(model.root, node)
+	promptUpdateTreeVersion(model.root, node, selectUpdateVersion)
 
 	if node.Selected {
 		t.Fatal("declining the picker must not select the row")

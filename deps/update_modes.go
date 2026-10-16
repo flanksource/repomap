@@ -3,6 +3,8 @@ package deps
 import (
 	"context"
 	"fmt"
+
+	"github.com/Masterminds/semver/v3"
 )
 
 // applyExplicitVersionUpdates applies opts.Version to every candidate. For
@@ -31,8 +33,31 @@ func applyExplicitVersionUpdates(ctx context.Context, candidates []UpdateCandida
 // applied to. Image and Helm targets are validated against their published
 // versions here; package managers validate the version themselves.
 func explicitVersionSkip(ctx context.Context, candidate UpdateCandidate, opts UpdateOptions) (UpdatePlan, bool) {
+	if candidate.actionSkip != "" {
+		return skippedUpdatePlan(candidate, candidate.actionSkip), true
+	}
 	if selectedVersionIsCurrent(candidate.Current, opts.Version) {
 		return skippedUpdatePlan(candidate, "already at selected version"), true
+	}
+	if candidate.Manager == ManagerActions {
+		if !candidate.action.Pinned {
+			if _, err := semver.NewVersion(candidate.action.Ref); err != nil {
+				return skippedUpdatePlan(candidate, fmt.Sprintf("reference %q is not a version tag", candidate.action.Ref)), true
+			}
+		}
+		tags, err := opts.actionResolver.Load(ctx, candidate.action.Repository)
+		if err != nil {
+			return failedUpdatePlan(candidate, err.Error()), true
+		}
+		if _, err = tags.Resolve(opts.Version); err != nil {
+			return failedUpdatePlan(candidate, err.Error()), true
+		}
+		if candidate.action.Pinned && candidate.action.VersionComment != "" {
+			if _, err = tags.CurrentVersion(candidate.action.Ref, candidate.action.VersionComment); err != nil {
+				return failedUpdatePlan(candidate, err.Error()), true
+			}
+		}
+		return UpdatePlan{}, false
 	}
 	if candidate.Manager != ManagerImage && candidate.Manager != ManagerHelm {
 		return UpdatePlan{}, false

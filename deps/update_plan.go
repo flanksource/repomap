@@ -16,6 +16,9 @@ func (p UpdatePlan) Pretty() api.Text {
 			t = t.Append(" -> ", "text-muted").Append(p.NewVersion, "font-mono text-green-600")
 		}
 	}
+	if p.ResolvedRef != "" {
+		t = t.Space().Append("pin "+p.ResolvedRef, "font-mono text-muted")
+	}
 	switch {
 	case p.Error != "":
 		t = t.Space().Append("failed: "+p.Error, "text-red-600")
@@ -51,6 +54,7 @@ func (UpdatePlan) Columns() []api.ColumnDef {
 		api.Column("source_file").Label("Catalog").Build(),
 		api.Column("consumers").Hidden().Build(),
 		api.Column("command").Hidden().Build(),
+		api.Column("resolved_ref").Hidden().Build(),
 		api.Column("changed_files").Hidden().Build(),
 		api.Column("staged").Hidden().Build(),
 		api.Column("error").Hidden().Build(),
@@ -65,6 +69,9 @@ func (p UpdatePlan) Row() map[string]any {
 		"file":       clicky.Text(p.File, "font-mono"),
 		"scope":      clicky.Text(p.Scope, "text-muted"),
 		"change":     updateChangeText(p.OldVersion, p.NewVersion),
+	}
+	if p.ResolvedRef != "" {
+		row["change"] = updateChangeText(p.OldVersion, p.NewVersion).Append(" (pin "+p.ResolvedRef+")", "font-mono text-muted")
 	}
 	switch {
 	case p.Error != "":
@@ -93,6 +100,9 @@ func (p UpdatePlan) Row() map[string]any {
 	}
 	if len(p.Command) > 0 {
 		row["command"] = p.Command
+	}
+	if p.ResolvedRef != "" {
+		row["resolved_ref"] = p.ResolvedRef
 	}
 	if p.Error != "" {
 		row["error"] = p.Error
@@ -149,6 +159,7 @@ func skippedUpdatePlan(candidate UpdateCandidate, reason string) UpdatePlan {
 func checkUpdatePlan(choice UpdateChoice) UpdatePlan {
 	plan := planFromCandidate(choice.Candidate)
 	plan.NewVersion = checkUpdateVersion(choice)
+	plan.ResolvedRef = choice.ResolvedRef
 	plan.Checked = true
 	return plan
 }

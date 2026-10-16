@@ -8,10 +8,6 @@ import (
 	"github.com/flanksource/clicky/api"
 )
 
-func promptUpdateCandidates(choices []UpdateChoice) ([]UpdateSelection, bool) {
-	return runUpdateChoiceTreePicker(choices)
-}
-
 // versionPromptKey identifies occurrences that pose the identical version
 // question: the same dependency, at the same current version, with the same
 // available versions. Occurrences that differ in any of those are genuinely
@@ -65,4 +61,3 @@ func promptUpdateVersion(prompt UpdateVersionPrompt) (string, bool) {
 		},
 	})
 }
-

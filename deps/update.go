@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/flanksource/repomap"
+	"github.com/flanksource/repomap/deps/internal/actions"
 	"github.com/flanksource/repomap/deps/internal/pnpm"
 	"github.com/flanksource/repomap/imageupdate"
 	"golang.org/x/mod/modfile"
@@ -23,11 +24,12 @@ const updateResolveConcurrency = 8
 const updateApplyConcurrency = 4
 
 var supportedUpdateManagers = map[Manager]bool{
-	ManagerGo:    true,
-	ManagerNPM:   true,
-	ManagerPNPM:  true,
-	ManagerImage: true,
-	ManagerHelm:  true,
+	ManagerGo:      true,
+	ManagerNPM:     true,
+	ManagerPNPM:    true,
+	ManagerActions: true,
+	ManagerImage:   true,
+	ManagerHelm:    true,
 }
 
 // CandidateSelector picks which dependencies to update and, for each, the
@@ -63,14 +65,16 @@ type UpdateOptions struct {
 	// Latest resolves each matched dependency to its highest stable version;
 	// Version applies an explicit version to all matched dependencies. They are
 	// mutually exclusive and both bypass the interactive pickers.
-	Latest  bool
-	Version string
+	Latest      bool
+	Version     string
+	Interactive bool
 
 	Check            bool
 	DryRun           bool
 	Runner           CommandRunner
 	ImageResolver    ImageVersionResolver
 	SelectCandidates CandidateSelector
+	actionResolver   *actionVersionResolver
 }
 
 // DiscoverFilter narrows image/helm targets during discovery by Kubernetes
@@ -83,16 +87,19 @@ type DiscoverFilter struct {
 }
 
 type UpdateCandidate struct {
-	Manager   Manager                   `json:"manager"`
-	Name      string                    `json:"name"`
-	Current   string                    `json:"current"`
-	Scope     string                    `json:"scope,omitempty"`
-	File      string                    `json:"file"`
-	Dir       string                    `json:"dir"`
-	Target    *imageupdate.UpdateTarget `json:"-"`
-	workspace *pnpm.Workspace
-	catalog   *pnpm.Reference
-	consumers []string
+	Manager    Manager                   `json:"manager"`
+	Name       string                    `json:"name"`
+	Current    string                    `json:"current"`
+	Scope      string                    `json:"scope,omitempty"`
+	File       string                    `json:"file"`
+	Dir        string                    `json:"dir"`
+	Target     *imageupdate.UpdateTarget `json:"-"`
+	action     *actions.Reference
+	actionSkip string
+	workspace  *pnpm.Workspace
+	catalog    *pnpm.Reference
+	git        *nodeGitSpec
+	consumers  []string
 }
 
 type UpdateChoice struct {
@@ -100,6 +107,8 @@ type UpdateChoice struct {
 	Versions         []string        `json:"versions"`
 	LatestStable     string          `json:"latest_stable,omitempty"`
 	LatestPrerelease string          `json:"latest_prerelease,omitempty"`
+	UpToDate         bool            `json:"up_to_date,omitempty"`
+	ResolvedRef      string          `json:"resolved_ref,omitempty"`
 }
 
 // UpdateSelection is a dependency chosen for update together with the version
@@ -125,6 +134,7 @@ type UpdatePlan struct {
 	Scope        string   `json:"scope,omitempty"`
 	OldVersion   string   `json:"old_version"`
 	NewVersion   string   `json:"new_version,omitempty"`
+	ResolvedRef  string   `json:"resolved_ref,omitempty"`
 	Command      []string `json:"command,omitempty"`
 	Written      bool     `json:"written"`
 	DryRun       bool     `json:"dry_run"`
@@ -145,6 +155,9 @@ func Update(ctx context.Context, path string, opts UpdateOptions) ([]UpdatePlan,
 	if opts.Latest && opts.Version != "" {
 		return nil, fmt.Errorf("--latest and --version are mutually exclusive")
 	}
+	if opts.Interactive && (opts.Latest || opts.Check || opts.Version != "") {
+		return nil, fmt.Errorf("--interactive cannot be combined with --latest, --stable, -y, --check, or --version")
+	}
 	managers, err := updateManagers(opts.Managers)
 	if err != nil {
 		return nil, err
@@ -153,6 +166,7 @@ func Update(ctx context.Context, path string, opts UpdateOptions) ([]UpdatePlan,
 	if opts.Runner == nil {
 		opts.Runner = ExecRunner{}
 	}
+	opts.actionResolver = newActionVersionResolver(opts.Runner)
 	// One resolver per run keeps its version memo and singleflight alive across
 	// every candidate, and builds the registry keychain (which shells out to
 	// Docker credential helpers) once instead of per candidate.
@@ -190,6 +204,11 @@ func Update(ctx context.Context, path string, opts UpdateOptions) ([]UpdatePlan,
 	// --version applies an explicit version to every matched dependency without
 	// listing available versions (it only validates image/helm availability).
 	if opts.Version != "" {
+		for _, candidate := range candidates {
+			if candidate.git != nil {
+				return nil, fmt.Errorf("%s is Git sourced; use the interactive v picker to select a commit", candidate.Name)
+			}
+		}
 		return finishUpdate(applyExplicitVersionUpdates(ctx, candidates, opts))
 	}
 
@@ -208,11 +227,16 @@ func Update(ctx context.Context, path string, opts UpdateOptions) ([]UpdatePlan,
 		return finishUpdate(orderedUpdatePlans(candidates, plansByKey))
 	}
 
-	selectCandidates := opts.SelectCandidates
-	if selectCandidates == nil {
-		selectCandidates = promptUpdateCandidates
+	var selected []UpdateSelection
+	var ok bool
+	if opts.SelectCandidates == nil {
+		selected, ok, err = runUpdateChoiceTreePicker(ctx, opts.Runner, choices)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		selected, ok = opts.SelectCandidates(choices)
 	}
-	selected, ok := selectCandidates(choices)
 	if !ok {
 		for _, choice := range choices {
 			plansByKey[choice.Candidate.key()] = skippedUpdatePlan(choice.Candidate, "selection cancelled")
@@ -238,6 +262,15 @@ func Update(ctx context.Context, path string, opts UpdateOptions) ([]UpdatePlan,
 			plansByKey[selection.Candidate.key()] = skippedUpdatePlan(selection.Candidate, noVersionSelectedReason(selection))
 			continue
 		}
+		if selection.Candidate.git != nil {
+			picked, isGit, err := parseNodeGitSpec(version)
+			if err != nil {
+				return nil, err
+			}
+			if !isGit || picked.Base != selection.Candidate.git.Base || !validCommitSHA(picked.Ref) {
+				return nil, fmt.Errorf("%s: Git selection must pin the original source to a full commit SHA", selection.Candidate.Name)
+			}
+		}
 		requests = append(requests, updateRequest{Candidate: selection.Candidate, Version: version})
 	}
 	for key, plan := range applyUpdateRequests(ctx, includeCatalogConsumers(candidates, requests), opts) {
@@ -249,6 +282,12 @@ func Update(ctx context.Context, path string, opts UpdateOptions) ([]UpdatePlan,
 // noVersionSelectedReason distinguishes a dependency the user left unanswered
 // from one that has no stable version to offer in the first place.
 func noVersionSelectedReason(selection UpdateSelection) string {
+	if selection.Candidate.git != nil {
+		return "no commit selected"
+	}
+	if selection.UpToDate {
+		return "already up to date"
+	}
 	if selection.LatestStable == "" {
 		return "no stable version available"
 	}
@@ -282,6 +321,12 @@ func DiscoverUpdateCandidates(path string, managers []Manager, filter DiscoverFi
 					out = append(out, candidates...)
 				case ManagerNPM, ManagerPNPM:
 					candidates, err := discoverPackageJSONUpdateCandidates(project)
+					if err != nil {
+						return nil, err
+					}
+					out = append(out, candidates...)
+				case ManagerActions:
+					candidates, err := discoverActionsUpdateCandidates(project)
 					if err != nil {
 						return nil, err
 					}
@@ -436,6 +481,13 @@ func discoverPackageJSONUpdateCandidates(project Project) ([]UpdateCandidate, er
 				if err != nil {
 					return nil, err
 				}
+			}
+			gitSpec, isGit, err := parseNodeGitSpec(candidate.Current)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %s: %w", path, name, err)
+			}
+			if isGit {
+				candidate.git = &gitSpec
 			}
 			out = append(out, candidate)
 		}

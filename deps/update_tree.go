@@ -1,6 +1,7 @@
 package deps
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -344,7 +345,7 @@ func (m updateChoiceTreeModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			selectUpdateTreeStable(n)
 		}
 	case "v":
-		if n := m.currentNode(); n != nil && !n.IsDir && n.Choice != nil {
+		if n := m.currentNode(); n != nil && !n.IsDir && n.Choice != nil && (!n.Choice.UpToDate || n.Choice.Candidate.Manager == ManagerGo || n.Choice.Candidate.git != nil) {
 			m.pendingPick = n
 			return m, tea.Quit
 		}
@@ -591,6 +592,12 @@ func updateTreeChoiceChips(n *updateChoiceTreeNode) string {
 		parts = append(parts, updateTreeStyled("catalog: "+cwdRelativePath(candidate.catalog.Workspace.File), "text-muted"))
 	}
 	switch version := n.resolvedVersion(); {
+	case version == "" && candidate.git != nil:
+		parts = append(parts, updateTreeStyled("press v to choose commit", "text-yellow-600"))
+	case version == "" && candidate.Manager == ManagerGo && len(choice.Versions) == 0:
+		parts = append(parts, updateTreeStyled("no newer release - press v for commit", "text-yellow-600"))
+	case version == "" && choice.UpToDate:
+		parts = append(parts, updateTreeStyled("up to date", "text-muted"))
 	case version == "":
 		parts = append(parts, updateTreeStyled("no stable version - press v", "text-yellow-600"))
 	case n.Mode == updateVersionModeExplicit:
@@ -632,28 +639,40 @@ func countVisibleUpdateTreeLeaves(nodes []*updateChoiceTreeNode) int {
 // version for each in one screen. Picking an explicit version (`v`) needs the
 // terminal bubbletea is holding, so the model quits, the prompt runs, and the
 // tree resumes over the same node pointers with its state intact.
-func runUpdateChoiceTreePicker(choices []UpdateChoice) ([]UpdateSelection, bool) {
+func runUpdateChoiceTreePicker(ctx context.Context, runner CommandRunner, choices []UpdateChoice) ([]UpdateSelection, bool, error) {
 	if len(choices) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	model := newUpdateChoiceTreeModel(choices)
 	if len(model.visible) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
-		return nil, false
+		return nil, false, fmt.Errorf("open dependency picker terminal: %w", err)
 	}
 	defer func() { _ = tty.Close() }()
 
 	for {
-		finished, ok := runUpdateChoiceTree(model, tty)
-		if !ok || finished.cancelled {
-			return nil, false
+		finished, err := runUpdateChoiceTree(model, tty)
+		if errors.Is(err, tea.ErrInterrupted) || finished.cancelled {
+			return nil, false, nil
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("run dependency selection tree: %w", err)
 		}
 		if node := finished.pendingPick; node != nil {
-			promptUpdateTreeVersion(finished.root, node)
+			var pickErr error
+			pick := func(prompt UpdateVersionPrompt) (string, bool) {
+				version, chosen, err := promptUpdateVersionWithGit(ctx, runner, prompt)
+				pickErr = err
+				return version, chosen
+			}
+			promptUpdateTreeVersion(finished.root, node, pick)
+			if pickErr != nil {
+				return nil, false, pickErr
+			}
 			model = finished
 			model.pendingPick = nil
 			model.submitted = false
@@ -661,15 +680,15 @@ func runUpdateChoiceTreePicker(choices []UpdateChoice) ([]UpdateSelection, bool)
 			continue
 		}
 		if !finished.submitted {
-			return nil, false
+			return nil, false, nil
 		}
-		return finished.selections(), true
+		return finished.selections(), true, nil
 	}
 }
 
 // runUpdateChoiceTree renders one pass of the tree, holding the ANSI terminal
 // only for as long as the program runs so a follow-up prompt can claim it.
-func runUpdateChoiceTree(model updateChoiceTreeModel, tty *os.File) (updateChoiceTreeModel, bool) {
+func runUpdateChoiceTree(model updateChoiceTreeModel, tty *os.File) (updateChoiceTreeModel, error) {
 	releaseTerminal, _ := task.AcquirePromptTerminal()
 	if releaseTerminal != nil {
 		defer releaseTerminal()
@@ -677,26 +696,26 @@ func runUpdateChoiceTree(model updateChoiceTreeModel, tty *os.File) (updateChoic
 
 	final, err := tea.NewProgram(model, tea.WithInput(tty), tea.WithOutput(tty), tea.WithAltScreen()).Run()
 	if err != nil {
-		if !errors.Is(err, tea.ErrInterrupted) {
-			return updateChoiceTreeModel{}, false
-		}
-		return updateChoiceTreeModel{}, false
+		return updateChoiceTreeModel{}, err
 	}
 	finished, ok := final.(updateChoiceTreeModel)
-	return finished, ok
+	if !ok {
+		return updateChoiceTreeModel{}, fmt.Errorf("unexpected dependency selection tree result %T", final)
+	}
+	return finished, nil
 }
 
 // promptUpdateTreeVersion asks the version question node poses and records the
 // answer on every row posing the identical question — the same dependency at the
 // same current version is one decision however many manifests declare it.
 // Declining leaves those rows on whatever they were already targeting.
-func promptUpdateTreeVersion(root, node *updateChoiceTreeNode) {
+func promptUpdateTreeVersion(root, node *updateChoiceTreeNode, pick VersionSelector) {
 	group := updateTreeRowsSharingVersionQuestion(root, node)
 	choices := make([]UpdateChoice, 0, len(group))
 	for _, row := range group {
 		choices = append(choices, *row.Choice)
 	}
-	version, ok := selectUpdateVersion(newUpdateVersionPrompt(choices))
+	version, ok := pick(newUpdateVersionPrompt(choices))
 	if !ok || strings.TrimSpace(version) == "" {
 		return
 	}

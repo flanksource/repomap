@@ -54,6 +54,7 @@ func applyUpdateRequests(ctx context.Context, requests []updateRequest, opts Upd
 		} else {
 			runUpdateLanes(ctx, groupUpdateBatchesIntoLanes(groupUpdateRequestsIntoBatches(requests)), requests, plans, opts)
 			refreshUpdateWorkspaces(ctx, requests, plans, opts)
+			verifyGitPins(ctx, requests, plans, opts)
 			finishUpdateStages(ctx, plans, stages)
 		}
 	}
@@ -141,6 +142,9 @@ func (b updateBatch) overlaps(other updateBatch) bool {
 }
 
 func (b updateBatch) laneKey() string {
+	if b.Manager == ManagerActions {
+		return "file:" + filepath.Join(b.Dir, filepath.Base(b.File))
+	}
 	if b.Manager == ManagerImage || b.Manager == ManagerHelm {
 		return "file:" + filepath.Join(b.Dir, b.File)
 	}
@@ -211,6 +215,9 @@ func pluralizeDependency(n int) string {
 
 func updateBatchKey(request updateRequest) string {
 	candidate := request.Candidate
+	if candidate.Manager == ManagerActions {
+		return "actions:" + filepath.Join(candidate.Dir, filepath.Base(candidate.File))
+	}
 	if candidate.catalog != nil {
 		return "catalog:" + candidate.catalog.Key()
 	}
@@ -222,6 +229,10 @@ func updateBatchKey(request updateRequest) string {
 
 // applyUpdateBatch records a failed mutating command without retrying it.
 func applyUpdateBatch(ctx context.Context, batch updateBatch, requests []updateRequest, plans []UpdatePlan, opts UpdateOptions) {
+	if batch.Manager == ManagerActions {
+		applyActionBatch(ctx, batch, requests, plans, opts)
+		return
+	}
 	if batch.Manager == ManagerImage || batch.Manager == ManagerHelm {
 		for _, i := range batch.Indexes {
 			plans[i] = applyImageTargetUpdate(ctx, requests[i].Candidate, requests[i].Version, opts)

@@ -11,29 +11,74 @@ import (
 )
 
 func resolveUpdateChoices(ctx context.Context, candidates []UpdateCandidate, opts UpdateOptions) ([]UpdateChoice, map[string]UpdatePlan) {
-	rawByKey := resolveRawVersionsByKey(ctx, candidates, opts)
+	var registryCandidates []UpdateCandidate
+	for _, candidate := range candidates {
+		if candidate.git == nil && candidate.actionSkip == "" {
+			registryCandidates = append(registryCandidates, candidate)
+		}
+	}
+	rawByKey := resolveRawVersionsByKey(ctx, registryCandidates, opts)
 
 	plansByKey := map[string]UpdatePlan{}
 	choices := make([]UpdateChoice, 0, len(candidates))
 	for _, candidate := range candidates {
+		if candidate.actionSkip != "" {
+			plansByKey[candidate.key()] = skippedUpdatePlan(candidate, candidate.actionSkip)
+			continue
+		}
+		if candidate.git != nil {
+			if opts.Check || opts.Latest {
+				plansByKey[candidate.key()] = skippedUpdatePlan(candidate, "Git dependency requires interactive SHA selection")
+			} else {
+				choices = append(choices, UpdateChoice{Candidate: candidate})
+			}
+			continue
+		}
 		raw := rawByKey[candidate.resolutionKey()]
 		if raw.err != nil {
 			plansByKey[candidate.key()] = failedUpdatePlan(candidate, raw.err.Error())
 			continue
 		}
+		if candidate.Manager == ManagerActions && len(raw.versions) == 0 {
+			plansByKey[candidate.key()] = skippedUpdatePlan(candidate, "no full release tags available")
+			continue
+		}
 		// The "newer than current" filtering is per occurrence: duplicates of the
 		// same dependency may sit at different current versions even though they
 		// share one published-version list.
-		versions := updateableVersions(candidate.Current, raw.versions)
-		if len(versions) == 0 {
+		current := candidate.Current
+		if candidate.Manager == ManagerActions {
+			tags, err := opts.actionResolver.Load(ctx, candidate.action.Repository)
+			if err != nil {
+				plansByKey[candidate.key()] = failedUpdatePlan(candidate, err.Error())
+				continue
+			}
+			current, err = tags.CurrentVersion(candidate.action.Ref, candidate.action.VersionComment)
+			if err != nil {
+				if candidate.action.Pinned {
+					plansByKey[candidate.key()] = failedUpdatePlan(candidate, err.Error())
+				} else {
+					plansByKey[candidate.key()] = skippedUpdatePlan(candidate, err.Error())
+				}
+				continue
+			}
+		}
+		versions := updateableVersions(current, raw.versions)
+		if len(versions) == 0 && !opts.Interactive && (candidate.Manager != ManagerGo || opts.Check || opts.Latest) {
 			continue
 		}
-		choices = append(choices, UpdateChoice{
+		choice := UpdateChoice{
 			Candidate:        candidate,
 			Versions:         versions,
 			LatestStable:     latestStableVersion(versions),
 			LatestPrerelease: latestPrereleaseVersion(versions),
-		})
+			UpToDate:         len(versions) == 0,
+		}
+		if candidate.Manager == ManagerActions && candidate.action.Pinned && checkUpdateVersion(choice) != "" {
+			tags, _ := opts.actionResolver.Load(ctx, candidate.action.Repository)
+			choice.ResolvedRef, _ = tags.Resolve(checkUpdateVersion(choice))
+		}
+		choices = append(choices, choice)
 	}
 	return choices, plansByKey
 }
@@ -147,6 +192,9 @@ func groupVersionLookups(keys []string, rep map[string]UpdateCandidate) []versio
 // be cached and reused across duplicate occurrences.
 func resolveCandidateRawVersions(ctx context.Context, opts UpdateOptions, candidate UpdateCandidate) ([]string, error) {
 	switch candidate.Manager {
+	case ManagerActions:
+		tags, err := opts.actionResolver.Load(ctx, candidate.action.Repository)
+		return tags.Versions(), err
 	case ManagerImage, ManagerHelm:
 		versions, _, _, err := availableImageTargetVersions(ctx, opts.ImageResolver, candidate)
 		return versions, err

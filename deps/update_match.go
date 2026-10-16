@@ -12,7 +12,7 @@ import (
 
 func updateManagers(managers []Manager) ([]Manager, error) {
 	if len(managers) == 0 {
-		return []Manager{ManagerGo, ManagerNPM, ManagerPNPM, ManagerImage, ManagerHelm}, nil
+		return []Manager{ManagerGo, ManagerNPM, ManagerPNPM, ManagerActions, ManagerImage, ManagerHelm}, nil
 	}
 	out := make([]Manager, 0, len(managers))
 	var unsupported []string
@@ -25,7 +25,7 @@ func updateManagers(managers []Manager) ([]Manager, error) {
 	}
 	if len(unsupported) > 0 {
 		sort.Strings(unsupported)
-		return nil, fmt.Errorf("dependency updates currently support go, npm, pnpm, image, and helm; unsupported manager(s): %s", strings.Join(unsupported, ", "))
+		return nil, fmt.Errorf("dependency updates currently support go, npm, pnpm, actions, image, and helm; unsupported manager(s): %s", strings.Join(unsupported, ", "))
 	}
 	return out, nil
 }
@@ -34,7 +34,7 @@ func packageUpdateManagers(managers []Manager) []Manager {
 	var out []Manager
 	for _, manager := range managers {
 		switch manager {
-		case ManagerGo, ManagerNPM, ManagerPNPM:
+		case ManagerGo, ManagerNPM, ManagerPNPM, ManagerActions:
 			out = append(out, manager)
 		}
 	}
@@ -161,6 +161,11 @@ func (c UpdateCandidate) resolutionKey() string {
 		return strings.Join([]string{string(ManagerImage), c.Name}, "\x00")
 	case ManagerHelm:
 		return strings.Join([]string{string(ManagerHelm), c.Name, helmSourceKey(c.Target)}, "\x00")
+	case ManagerActions:
+		if c.action != nil {
+			return string(ManagerActions) + "\x00" + c.action.Repository
+		}
+		return string(ManagerActions) + "\x00" + c.Name
 	default:
 		return strings.Join([]string{string(c.Manager), c.Name, c.Dir}, "\x00")
 	}

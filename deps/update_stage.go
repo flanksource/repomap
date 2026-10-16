@@ -91,6 +91,8 @@ func updatedRepoFiles(candidate UpdateCandidate) []string {
 		return []string{"package.json", "package-lock.json"}
 	case ManagerPNPM:
 		return []string{"package.json", "pnpm-lock.yaml"}
+	case ManagerActions:
+		return []string{filepath.Base(candidate.File)}
 	case ManagerImage, ManagerHelm:
 		if candidate.Target != nil && candidate.Target.File != "" {
 			return []string{candidate.Target.File}

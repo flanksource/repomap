@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,8 +11,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/flanksource/clicky"
+	depgraph "github.com/flanksource/repomap/deps"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/spf13/cobra"
 )
 
 func TestUpdateCLI(t *testing.T) {
@@ -29,7 +33,22 @@ func TestUpdateCLI(t *testing.T) {
 	RunSpecs(t, "Dependency update command")
 }
 
-var _ = Describe("dependency update command failures", func() {
+var _ = Describe("dependency update command", func() {
+	It("binds -i to interactive dependency selection", func() {
+		var got DepsUpdateOptions
+		root := &cobra.Command{Use: "test"}
+		deps := clicky.AddNamedCommandWithContext("deps", root, DepsOptions{}, func(_ context.Context, _ DepsOptions) (*depgraph.Export, error) {
+			return &depgraph.Export{}, nil
+		})
+		clicky.AddNamedCommandWithContext("update", deps, DepsUpdateOptions{}, func(_ context.Context, opts DepsUpdateOptions) (any, error) {
+			got = opts
+			return nil, nil
+		})
+		root.SetArgs([]string{"deps", "update", "-i"})
+		Expect(root.Execute()).To(Succeed())
+		Expect(got.Interactive).To(BeTrue())
+	})
+
 	It("prints one JSON result document, retains stderr, and exits nonzero", func() {
 		dir := GinkgoT().TempDir()
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
